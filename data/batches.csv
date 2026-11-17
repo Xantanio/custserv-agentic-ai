@@ -1,0 +1,4 @@
+batch_id,product_id,product_name,manufacturing_date,factory_code,total_units_produced,is_blocked,proactive_recall_triggered
+LOTE-2026-DEF,PROD-SMART-WATCH-X,Smartwatch Omni Pulse V2,2026-10-01,FAC-SP-01,100,False,False
+LOTE-2026-OK,PROD-EARBUDS-PRO,Fone de Ouvido Noise Cancel Pro,2026-09-15,FAC-AM-02,500,False,False
+LOTE-2026-BLOCKED,PROD-POWERBANK-MAX,Carregador Portátil 20000mAh Ultra,2026-08-10,FAC-SC-03,200,True,True
