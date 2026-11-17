@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omniops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-omniops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omniops_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-omniops_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omniops} -d ${POSTGRES_DB:-omniops_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  seed_db:
+    build: .
+    container_name: omniops-seed
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-omniops}:${POSTGRES_PASSWORD:-omniops_secret}@postgres:5432/${POSTGRES_DB:-omniops_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python scripts/seed_db.py
+
+  api:
+    build: .
+    container_name: omniops-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-omniops}:${POSTGRES_PASSWORD:-omniops_secret}@postgres:5432/${POSTGRES_DB:-omniops_db}
+      MCP_SERVER_URL: http://mcp_server:8001
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/MOCK/A2A/SPECIALISTS}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-mock-openai-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed_db:
+        condition: service_completed_successfully
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  mcp_server:
+    build: .
+    container_name: omniops-mcp
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-omniops}:${POSTGRES_PASSWORD:-omniops_secret}@postgres:5432/${POSTGRES_DB:-omniops_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed_db:
+        condition: service_completed_successfully
+    command: python mcp_server/server.py
+
+  ui:
+    build: .
+    container_name: omniops-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_started
+    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0
+
+volumes:
+  pgdata:

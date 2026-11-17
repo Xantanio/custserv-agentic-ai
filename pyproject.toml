@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omniops-ai"
+version = "0.1.0"
+description = "Omnichannel Customer Service & Operations Hub driven by LangGraph, MCP and A2A"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "OmniOps AI Team" }
+]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "sqlalchemy[asyncio]>=2.0.28",
+    "greenlet>=3.0.0",
+    "asyncpg>=0.29.0",
+    "langgraph>=0.0.30",
+    "langchain>=0.1.13",
+    "langchain-core>=0.1.33",
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "streamlit>=1.32.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.5",
+    "pytest-mock>=3.14.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "api*", "agents*", "mcp_server*", "ui*"]
+exclude = ["data*", "tests*", "docs*", "scripts*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
