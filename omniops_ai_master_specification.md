@@ -123,7 +123,7 @@ O banco relacional possui 4 tabelas principais que fornecem contexto histórico,
    * `batch_id` (`VARCHAR`, FK $\rightarrow$ `batches.batch_id`)
    * `order_value` (`DECIMAL(10,2)`)
    * `carrier_status` (`ENUM`: `'in_transit'`, `'delivered_signed'`, `'delayed'`)
-   * `proactive_alert_sent` (`BOOLEAN`, default `False` — indica se o cliente já foi alertado proativamente sobre defeito no lote)
+   * Estado de alerta proativo controlado por pedido, com tentativas, falhas e confirmação de entrega. O booleano `proactive_alert_sent` do protótipo não distingue tentativa de entrega; evoluir para estado/eventos e considerar o alerta enviado somente após confirmação do provedor.
    * `purchase_date` (`TIMESTAMP`)
 
 4. **`tickets` (Chamados, Sentimento e Auditoria)**
@@ -131,6 +131,7 @@ O banco relacional possui 4 tabelas principais que fornecem contexto histórico,
    * `thread_id` (`VARCHAR` — identificador de sessão no LangGraph para retomada)
    * `customer_id` (`UUID`, FK $\rightarrow$ `customers.customer_id`)
    * `order_id` (`VARCHAR`, FK $\rightarrow$ `orders.order_id`, Nullable)
+   * Identificação da unidade relacionada à reclamação, quando disponível (por exemplo, número de série ou identificador de unidade); caso não seja possível identificar, registrar explicitamente `unidade não identificada`.
    * `channel` (`ENUM`: `'whatsapp'`, `'email'`, `'reclame_aqui'`)
    * `message_text` (`TEXT`)
    * `intent` (`VARCHAR` — ex: `'defective_item'`, `'shipping_delay'`, `'health_issue'`, `'refund_request'`)
@@ -148,12 +149,14 @@ O banco relacional possui 4 tabelas principais que fornecem contexto histórico,
 Sempre que um chamado tiver `intent == 'defective_item'`, o **Agente Preditivo de Lotes** consulta o MCP Server e calcula:
 
 $$
-\text{Taxa de Reclamação do Lote} = \frac{\text{Total de Tickets com Defeito no } \text{batch\_id}}{\text{Total de Unidades Produzidas no } \text{batch\_id}}
+\text{Taxa de Unidades Afetadas Identificadas} = \frac{\text{Unidades distintas identificadas com defeito no lote}}{\text{Total de Unidades Produzidas no lote}}
 $$
+
+Reclamações múltiplas associadas à mesma unidade contam como uma única unidade afetada. Reclamações sem unidade identificável devem ser registradas e contabilizadas separadamente, mas excluídas do numerador. Exibir também essa contagem separada, pois unidades não identificadas podem fazer a taxa calculada ficar abaixo da incidência real.
 
 * **Regra Crítica ($\ge 50\%$):** Quando $\text{Taxa de Reclamação do Lote} \ge 0.50$ ($50\%$), o sistema executa três ações coordenadas:
   1. **Contenção Industrial e Comercial:** Marca `batch_flagged = True` no ticket e bloqueia novas vendas daquele lote no ERP (`batches.is_blocked = True`).
-  2. **Alerta Proativo aos Clientes Silenciosos:** Consulta via MCP todos os pedidos (`orders`) vinculados àquele `batch_id` cujos clientes **ainda não abriram reclamação** (`proactive_alert_sent == False` e sem ticket de defeito aberto). O sistema dispara notificações proativas (WhatsApp/E-mail) avisando sobre a possível falha detectada no lote e oferecendo troca preventiva ou reembolso sem burocracia, marcando `proactive_alert_sent = True`.
+  2. **Alerta Proativo aos Clientes Silenciosos:** Consulta via MCP os pedidos (`orders`) vinculados àquele `batch_id` sem reclamação de defeito referente ao produto daquele pedido e sem alerta confirmado como entregue. O alerta é controlado por pedido. Uma tentativa de envio não conta como alerta enviado: registrar como entregue somente após confirmação do provedor de mensageria. Registrar tentativas, falhas e confirmações para evitar duplicações e permitir auditoria.
   3. **Acionamento de Especialistas para Causa Raiz:** Aciona o **Agente de Enlace Interno (`liaison_agent.py`)** enviando os metadados de produção (`batch_id`, `factory_code`, `manufacturing_date`, `product_id` e amostra dos defeitos relatados) para que a equipe de engenharia/qualidade investigue **o que causou o problema no lote** e valide ações corretivas na fábrica.
 
 #### B. Score de Priorização do Cliente (`priority_score`)
@@ -162,6 +165,8 @@ Calculado deterministicamente de $0$ a $100$ para ordenar filas e definir urgên
 $$
 \text{priority\_score} = \min\Big(100,\; W_{\text{tier}} + W_{\text{ltv}} + W_{\text{sentimento}} + W_{\text{canal}}\Big)
 $$
+
+O `priority_score` serve para ordenar ou sinalizar a fila de atendimento. Ele não autoriza reembolso, troca, encerramento de caso ou qualquer outra ação por si só. A autorização de ações deve vir de regras de decisão próprias.
 
 * $W_{\text{tier}}$: `'VIP'` $= +35$, `'Regular'` $= +15$, `'New'` $= +5$.
 * $W_{\text{ltv}}$: $+15$ se $\text{lifetime\_value} \ge 1500.00$, senão $+0$.
@@ -253,6 +258,19 @@ Quando o **Agente Preditivo** detecta um lote crítico ($\ge 50\%$) ou surge um 
 * Dados industriais para **análise de causa raiz**: código da fábrica (`factory_code`), data de fabricação (`manufacturing_date`), linha do produto (`product_id`), volume produzido vs. taxa de reclamações.
 * Relatório de contenção já executada: confirmação do bloqueio de vendas do lote e contagem de **clientes silenciosos do lote que acabaram de receber o alerta proativo**.
 * Botões/comandos de retorno (ex: `"Registrar causa raiz e confirmar recall do lote LOTE-2026-11-A"`). Ao receber o webhook de resposta do especialista, o FastAPI valida o token, registra o diagnóstico técnico e retoma a execução do LangGraph (`graph.ainvoke(None, config={"configurable": {"thread_id": ...}})`).
+
+### 6.3. Decisões de Arquitetura em Discussão
+
+As decisões abaixo foram acordadas para orientar o desenho. Não implicam que os componentes já estejam implementados.
+
+1. **Fluxo explícito e explicável:** usar um grafo de fluxo explícito para controlar etapas, roteamento e ações. Modelos podem interpretar linguagem e propor campos estruturados, mas regras e transições operacionais devem ser explícitas sempre que possível, especialmente antes de efeitos externos.
+2. **Separação de responsabilidades:** avaliar uma arquitetura com um orquestrador que controla o fluxo, agentes de domínio com tarefas delimitadas e, possivelmente, um agente generalista para contatos simples. A quantidade e as fronteiras dos agentes ainda serão definidas; evitar agentes sem responsabilidade distinta.
+3. **Prioridade separada de autorização:** `priority_score` ordena/sinaliza a fila e não concede autorização para executar ações.
+4. **Auditoria das decisões:** manter eventos por atendimento associados ao `thread_id`, distinguindo claramente interpretações do modelo, resultados das ferramentas, regras determinísticas aplicadas, decisões do código e ações efetivamente executadas. Registrar versões do modelo/regra quando disponíveis, dados relevantes de entrada e resultado/erro da ação. Evitar armazenar dados pessoais desnecessários.
+5. **Unidades afetadas:** contar unidades distintas identificadas; reclamações repetidas da mesma unidade contam uma vez. Reclamações sem unidade identificável são classificadas e contabilizadas separadamente, sem entrar no numerador da taxa.
+6. **Clientes silenciosos e alertas:** avaliar reclamações relacionadas especificamente ao produto/lote do pedido. A elegibilidade e o estado do alerta são por pedido. Considerar alerta entregue somente com confirmação do provedor.
+
+As políticas de guardrails (saúde, fraude, valores financeiros, ameaças judiciais e autonomia) ainda precisam ser discutidas e validadas; as regras da seção 6.1 são propostas do guia e não devem ser tratadas como decisões finais aprovadas.
 
 ## 7. Antigravity Custom Skills (`.agents/skills/`)
 
