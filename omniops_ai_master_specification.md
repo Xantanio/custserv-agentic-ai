@@ -235,7 +235,7 @@ Para validar toda a arquitetura em ambiente de desenvolvimento e portfólio sem 
 
 #### Situações de Autonomia Total (Zero Toque Humano)
 * **Rastreio e Dúvidas de Entrega:** Consulta o status via MCP e responde ao cliente com o código de rastreio.
-* **Contenção e Alerta Proativo por Lote Defeituoso ($\ge 50\%$):** Quando a falha industrial atinge o limiar crítico, o sistema bloqueia o lote no ERP, resolve o reembolso/troca do cliente reclamante (se houver bom histórico) e **dispara alertas preventivos autônomos** para todos os demais compradores daquele mesmo lote que ainda não reclamaram, enquanto aciona o especialista em paralelo para investigação da causa raiz.
+* **Contenção e Alerta Proativo por Lote Defeituoso ($\ge 50\%$):** Quando a falha industrial atinge o limiar crítico, o sistema bloqueia o lote no ERP, resolve o reembolso/troca do cliente reclamante (se atender à definição de bom histórico abaixo) e **dispara alertas preventivos autônomos** para todos os demais compradores daquele mesmo lote que ainda não reclamaram, enquanto aciona o especialista em paralelo para investigação da causa raiz.
 * **Fast-Track VIP de Baixo Risco:** Cliente `'VIP'` com `return_rate < 0.10` e valor do pedido $\le \text{R\$ } 100,00$ recebe crédito/reenvio automático.
 
 #### Situações de Bloqueio de Autonomia (Human-in-the-Loop Obrigatório)
@@ -244,11 +244,11 @@ Para validar toda a arquitetura em ambiente de desenvolvimento e portfólio sem 
 2. **Investigação de Causa Raiz e Recall Formal de Lote ($\ge 50\%$):**
    * *Ação:* Embora o alerta preventivo ao cliente e o bloqueio de venda ocorram automaticamente, o encerramento da investigação industrial e a ordem formal de *recall* exigem o diagnóstico do especialista humano acionado via A2A.
 3. **Suspeita de Fraude ou Contradição Logística:**
-   * *Ação:* Cliente `'New'` com alta taxa de devolução histórica ou alegação de "caixa vazia" quando a transportadora registra `delivered_signed`.
+   * *Ação:* Cliente `'New'` com taxa de devolução histórica acima de 60% ou alegação de "caixa vazia" quando a transportadora registra `delivered_signed`.
 4. **Alto Impacto Financeiro:**
    * *Ação:* Pedidos ou estornos acima de $\text{R\$ } 500,00$ exigem aprovação explícita de um supervisor.
-5. **Sentimento Extremamente Negativo ($\le -0.8$) ou Ameaças Judiciais:**
-   * *Ação:* Menções a Procon, processos ou hostilidade severa bloqueiam respostas automáticas genéricas e transferem o caso para atendimento humano prioritário.
+5. **Sentimento Extremamente Negativo ($\le -0.8$), Ameaças Judiciais ou Hostilidade Severa:**
+   * *Ação:* Menções a Procon, processos ou hostilidade severa bloqueiam respostas automáticas genéricas e transferem o caso para atendimento humano prioritário. Hostilidade será identificada por classificador de tom agressivo combinado com detecção de palavrões/insultos em português; nenhum dos sinais isoladamente decide o caso. O classificador e o limiar operacional devem ser validados com mensagens rotuladas por pessoas. Casos incertos vão para revisão humana.
 
 ### 6.2. Central de Especialistas (Comunicação A2A via Slack/Teams)
 
@@ -270,7 +270,9 @@ As decisões abaixo foram acordadas para orientar o desenho. Não implicam que o
 5. **Unidades afetadas:** contar unidades distintas identificadas; reclamações repetidas da mesma unidade contam uma vez. Reclamações sem unidade identificável são classificadas e contabilizadas separadamente, sem entrar no numerador da taxa.
 6. **Clientes silenciosos e alertas:** avaliar reclamações relacionadas especificamente ao produto/lote do pedido. A elegibilidade e o estado do alerta são por pedido. Considerar alerta entregue somente com confirmação do provedor.
 
-As políticas de guardrails (saúde, fraude, valores financeiros, ameaças judiciais e autonomia) ainda precisam ser discutidas e validadas; as regras da seção 6.1 são propostas do guia e não devem ser tratadas como decisões finais aprovadas.
+As políticas de guardrails descritas na seção 6.1 foram aprovadas pelo responsável pelo projeto em 20/11/2026 e passam a orientar a implementação. Para decisões que dependem do histórico do cliente, considera-se **bom histórico** quando pelo menos 90% de todos os pedidos históricos não tiveram solicitação de reembolso e nenhum dos cinco pedidos mais recentes teve reembolso classificado como indevido. Cada solicitação de reembolso deve ter registro próprio e estado de validação `pending`, `validated` ou `invalid`; `validated` significa reembolso justo e `invalid` significa indevido. Um pedido só conta como indevido após validação concluída; solicitações pendentes não podem ser tratadas como indevidas nem qualificam o cliente para autonomia. Clientes com menos de cinco pedidos não satisfazem ainda o critério dos cinco pedidos.
+
+Na triagem, a confiança será registrada separadamente por campo (por exemplo, intenção, risco à saúde e entidades extraídas), calibrada e avaliada contra mensagens rotuladas por pessoas. Os limiares serão definidos a partir da validação, considerando o custo dos erros por categoria; em saúde, priorizar recall e encaminhar incertezas à revisão humana. Não usar confiança autodeclarada por um LLM sem calibração. Os limites de confiança e de hostilidade ainda precisam ser determinados empiricamente; até lá, casos incertos seguem para revisão humana. A aprovação não autoriza o modelo a executar ações: as regras devem ser aplicadas deterministicamente pelo código, com prioridade separada de autorização.
 
 ## 7. Antigravity Custom Skills (`.agents/skills/`)
 
