@@ -130,6 +130,7 @@ async def seed_historic_tickets(session) -> None:
                     thread_id=row["thread_id"],
                     customer_id=uuid.UUID(row["customer_id"]),
                     order_id=row["order_id"] if row["order_id"] else None,
+                    unit_identifier=row.get("unit_identifier") or None,
                     channel=ChannelType(row["channel"]),
                     message_text=row["message_text"],
                     intent=row["intent"],

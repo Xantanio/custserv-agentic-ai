@@ -28,6 +28,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
+O repositório está avançando por fases. A Fase 1 (modelos e dados sintéticos) está implementada; a Fase 2 adiciona o servidor MCP e suas ferramentas de consulta de cliente/pedido, métricas de lote, busca de pedidos elegíveis e bloqueio de lote. A API omnichannel e os agentes das fases seguintes ainda serão construídos.
+
 Serviços iniciados:
 - **API FastAPI & Webhooks:** `http://localhost:8000`
 - **MCP Server:** `http://localhost:8001`

@@ -146,6 +146,10 @@ class TicketBase(BaseSchema):
     thread_id: str
     customer_id: uuid.UUID
     order_id: Optional[str] = None
+    unit_identifier: Optional[str] = Field(
+        default=None, max_length=100,
+        description="Identificador da unidade afetada; None quando não identificada",
+    )
     channel: ChannelType
     message_text: str
     intent: str

@@ -180,6 +180,7 @@ class Ticket(Base):
     order_id: Mapped[str | None] = mapped_column(
         String(100), ForeignKey("orders.order_id"), nullable=True, index=True
     )
+    unit_identifier: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     channel: Mapped[ChannelType] = mapped_column(
         SQLEnum(ChannelType, native_enum=False), nullable=False
     )

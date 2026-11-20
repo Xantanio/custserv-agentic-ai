@@ -249,6 +249,7 @@ for i in range(1, 50):
         "thread_id": f"hist-thread-{i:03d}",
         "customer_id": cust_id,
         "order_id": order_id,
+        "unit_identifier": f"UNIT-DEF-{i:03d}",
         "channel": "email" if i % 2 == 0 else "whatsapp",
         "message_text": f"O relogio do lote LOTE-2026-DEF apresentou tela preta e parou de carregar apos 2 dias de uso (caso {i}).",
         "intent": "defective_item",
