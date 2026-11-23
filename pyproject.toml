@@ -45,3 +45,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: exige Postgres acessível (banco <POSTGRES_DB>_test); pulado se indisponível",
+]

@@ -8,7 +8,7 @@ Agents act as MCP Clients and consume these tools to:
 - Calculate predictive batch failure rates
 - Identify silent customers for proactive alerting
 - Block defective batches in the ERP
-- Mark proactive alerts as sent
+- Queue proactive alerts (idempotent; delivery confirmed by provider)
 - Retrieve defect symptom samples for specialist dossiers
 """
 
@@ -28,7 +28,7 @@ from mcp_server.inventory_tools import (
     calculate_batch_failure_rate,
     get_silent_customers,
     block_batch_in_erp,
-    mark_proactive_alerts_sent,
+    queue_proactive_alerts,
     get_defect_symptoms_sample,
 )
 
@@ -70,7 +70,7 @@ async def lookup_customer(
 async def lookup_order(order_id: str) -> str:
     """Busca detalhes de um pedido pelo ID (ex: 'ORD-10001').
 
-    Retorna: produto, lote vinculado, valor, status da transportadora e flag de alerta proativo.
+    Retorna: produto, lote vinculado, valor, transportadora, status de entrega e status do alerta proativo.
     """
     result = await get_order(order_id=order_id)
     return json.dumps(result, ensure_ascii=False, default=str)
@@ -124,13 +124,13 @@ async def block_batch(batch_id: str) -> str:
 
 
 @mcp.tool()
-async def mark_alerts_sent(batch_id: str, order_ids: List[str]) -> str:
-    """Marca pedidos específicos como tendo recebido o alerta proativo de defeito.
+async def queue_alerts(batch_id: str, order_ids: List[str]) -> str:
+    """Enfileira alertas proativos (status pending) para pedidos do lote.
 
-    Define orders.proactive_alert_sent = True para os order_ids fornecidos
-    e batches.proactive_recall_triggered = True no lote.
+    Não marca como enviado: só a confirmação do provedor gera `delivered`.
+    Idempotente: repetir a chamada não duplica alertas.
     """
-    result = await mark_proactive_alerts_sent(batch_id=batch_id, order_ids=order_ids)
+    result = await queue_proactive_alerts(batch_id=batch_id, order_ids=order_ids)
     return json.dumps(result, ensure_ascii=False, default=str)
 
 

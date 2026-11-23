@@ -1,16 +1,21 @@
 import uuid
 from datetime import datetime, date, timezone
 from decimal import Decimal
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.database import (
+    AlertStatus,
+    AuditKind,
     CustomerTier,
     CarrierStatus,
     ChannelType,
     SentimentLabel,
     AutonomyStatus,
 )
+
+# Formato do número de série (D10): SN-<SIGLA>-<6 dígitos>, ex.: SN-SW-000123.
+SERIAL_PATTERN = r"^SN-[A-Z]{2,4}-\d{6}$"
 
 
 # -----------------------------------------------------------------------------
@@ -127,7 +132,7 @@ class OrderBase(BaseSchema):
     batch_id: str = Field(..., max_length=100)
     order_value: Decimal = Field(..., ge=0)
     carrier_status: CarrierStatus = Field(default=CarrierStatus.IN_TRANSIT)
-    proactive_alert_sent: bool = Field(default=False)
+    carrier: str = Field(..., max_length=50, description="Transportadora responsável pela entrega")
     purchase_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -140,12 +145,33 @@ class OrderRead(OrderBase):
 
 
 # -----------------------------------------------------------------------------
+# Unit Schemas (D6)
+# -----------------------------------------------------------------------------
+class UnitBase(BaseSchema):
+    serial_number: str = Field(..., pattern=SERIAL_PATTERN)
+    batch_id: str = Field(..., max_length=100)
+    product_id: str = Field(..., max_length=100)
+    order_id: Optional[str] = Field(default=None, description="NULL = unidade ainda em estoque")
+    production_line: str = Field(..., max_length=10)
+    manufactured_at: datetime
+
+
+class UnitRead(UnitBase):
+    pass
+
+
+# -----------------------------------------------------------------------------
 # Ticket Schemas
 # -----------------------------------------------------------------------------
 class TicketBase(BaseSchema):
     thread_id: str
     customer_id: uuid.UUID
     order_id: Optional[str] = None
+    serial_number: Optional[str] = Field(
+        default=None,
+        pattern=SERIAL_PATTERN,
+        description="NULL = unidade não identificada (fora do numerador da taxa)",
+    )
     channel: ChannelType
     message_text: str
     intent: str
@@ -169,6 +195,27 @@ class TicketRead(TicketBase):
 # -----------------------------------------------------------------------------
 # Proactive Alert & Liaison A2A Schemas
 # -----------------------------------------------------------------------------
+class ProactiveAlertEventRead(BaseSchema):
+    event_id: uuid.UUID
+    order_id: str
+    status: AlertStatus
+    template_id: str
+    attempts: int = Field(..., ge=0)
+    provider_message_id: Optional[str] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    delivered_at: Optional[datetime] = None
+
+
+class AuditEventCreate(BaseSchema):
+    thread_id: str = Field(..., min_length=1, max_length=100)
+    kind: AuditKind
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    model_version: Optional[str] = None
+    rule_id: Optional[str] = None
+
+
 class ProactiveAlertPayload(BaseSchema):
     customer_id: uuid.UUID
     customer_name: str

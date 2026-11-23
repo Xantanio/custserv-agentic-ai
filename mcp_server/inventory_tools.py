@@ -7,10 +7,30 @@ silent customer identification and proactive alert queue management.
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func, update
+from sqlalchemy import exists, select, func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import AsyncSessionLocal, Batch, Order, Ticket, Customer
+from core.database import (
+    AlertStatus,
+    AsyncSessionLocal,
+    Batch,
+    Customer,
+    Order,
+    ProactiveAlertEvent,
+    Ticket,
+)
+
+# Template aprovado do alerta proativo (D11): nada de texto livre gerado por LLM.
+RECALL_ALERT_TEMPLATE_ID = "recall_alert_v1"
+
+
+def _no_delivered_alert():
+    """Condição SQL: o pedido ainda não tem alerta com status `delivered`."""
+    return ~exists().where(
+        ProactiveAlertEvent.order_id == Order.order_id,
+        ProactiveAlertEvent.status == AlertStatus.DELIVERED,
+    )
 
 logger = logging.getLogger("mcp.inventory_tools")
 
@@ -87,7 +107,7 @@ async def _count_silent_customers(s: AsyncSession, batch_id: str) -> int:
     stmt = (
         select(func.count(Order.order_id.distinct()))
         .where(Order.batch_id == batch_id)
-        .where(Order.proactive_alert_sent == False)  # noqa: E712
+        .where(_no_delivered_alert())
         .where(Order.customer_id.notin_(select(complaining_subq.c.customer_id)))
     )
     result = await s.execute(stmt)
@@ -124,7 +144,7 @@ async def get_silent_customers(
             select(Order, Customer)
             .join(Customer, Order.customer_id == Customer.customer_id)
             .where(Order.batch_id == batch_id)
-            .where(Order.proactive_alert_sent == False)  # noqa: E712
+            .where(_no_delivered_alert())
             .where(Order.customer_id.notin_(select(complaining_subq.c.customer_id)))
         )
         result = await s.execute(stmt)
@@ -197,15 +217,16 @@ async def block_batch_in_erp(
         return await _query(s)
 
 
-async def mark_proactive_alerts_sent(
+async def queue_proactive_alerts(
     batch_id: str,
     order_ids: List[str],
     session: Optional[AsyncSession] = None,
 ) -> Dict[str, Any]:
-    """Mark specific orders as having received the proactive defect alert.
+    """Enfileira alertas proativos (status `pending`) para pedidos do lote.
 
-    Sets orders.proactive_alert_sent = True for the given order_ids
-    and batches.proactive_recall_triggered = True on the batch.
+    Não marca nada como enviado: só a confirmação do provedor muda o status
+    para `delivered`. Idempotente: `ON CONFLICT DO NOTHING` sobre a restrição
+    `uq_alert_per_order`, então repetir a chamada não duplica alertas.
     """
 
     async def _query(s: AsyncSession) -> Dict[str, Any]:
@@ -213,34 +234,41 @@ async def mark_proactive_alerts_sent(
         if not batch:
             return {"success": False, "error": f"Batch {batch_id} not found"}
 
-        # Mark orders
-        if order_ids:
-            stmt = (
-                update(Order)
+        # Só pedidos que de fato pertencem ao lote
+        valid = (
+            await s.execute(
+                select(Order.order_id)
                 .where(Order.order_id.in_(order_ids))
                 .where(Order.batch_id == batch_id)
-                .values(proactive_alert_sent=True)
             )
-            result = await s.execute(stmt)
-            updated_count = result.rowcount
-        else:
-            updated_count = 0
+        ).scalars().all() if order_ids else []
 
-        # Mark batch recall triggered
+        queued = 0
+        if valid:
+            stmt = (
+                insert(ProactiveAlertEvent)
+                .values([
+                    {"order_id": oid, "status": AlertStatus.PENDING,
+                     "template_id": RECALL_ALERT_TEMPLATE_ID, "attempts": 0}
+                    for oid in valid
+                ])
+                .on_conflict_do_nothing(constraint="uq_alert_per_order")
+                .returning(ProactiveAlertEvent.order_id)
+            )
+            queued = len((await s.execute(stmt)).all())
+
         if not batch.proactive_recall_triggered:
             batch.proactive_recall_triggered = True
 
         await s.commit()
-        logger.info(
-            "Proactive alerts marked for batch %s: %d orders updated.",
-            batch_id,
-            updated_count,
-        )
+        logger.info("Proactive alerts queued for batch %s: %d new.", batch_id, queued)
 
         return {
             "success": True,
             "batch_id": batch_id,
-            "orders_updated": updated_count,
+            "alerts_queued": queued,
+            "already_queued": len(valid) - queued,
+            "ignored_order_ids": sorted(set(order_ids) - set(valid)),
             "proactive_recall_triggered": True,
         }
 

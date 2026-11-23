@@ -5,6 +5,7 @@ c3333333-3333-3333-3333-333333333333,Lucas Silencioso,lucas.silva@example.com,+5
 d4444444-4444-4444-4444-444444444444,Beatriz Silenciosa,beatriz.oliveira@example.com,+5521998877665,VIP,1800.00,6,0.0
 e5555555-5555-5555-5555-555555555555,Fernanda Alergia,fernanda.alergia@example.com,+5531988771122,New,89.00,1,0.0
 f6666666-6666-6666-6666-666666666666,Marcos Suspeito,marcos.suspeito@example.com,+5541991122334,New,150.00,3,0.67
+ee66c3dd-f082-51cd-9b9b-fc46bbe15cde,Rafael Sem Serial,rafael.sem.serial@example.com,+5511955554444,Regular,399.00,1,0.0
 10000000-0000-0000-0000-000000000001,Consumidor Historico 01,historico01@example.com,+5511990000001,Regular,399.00,1,0.0
 10000000-0000-0000-0000-000000000002,Consumidor Historico 02,historico02@example.com,+5511990000002,Regular,399.00,1,0.0
 10000000-0000-0000-0000-000000000003,Consumidor Historico 03,historico03@example.com,+5511990000003,Regular,399.00,1,0.0
@@ -54,3 +55,35 @@ f6666666-6666-6666-6666-666666666666,Marcos Suspeito,marcos.suspeito@example.com
 10000000-0000-0000-0000-000000000047,Consumidor Historico 47,historico47@example.com,+5511990000047,Regular,399.00,1,0.0
 10000000-0000-0000-0000-000000000048,Consumidor Historico 48,historico48@example.com,+5511990000048,Regular,399.00,1,0.0
 10000000-0000-0000-0000-000000000049,Consumidor Historico 49,historico49@example.com,+5511990000049,Regular,399.00,1,0.0
+f369a068-743c-5ea8-9012-52931a45b499,Comprador Silencioso 01,silencioso01@example.com,+5511981000001,Regular,399.00,1,0.0
+02625feb-a2d7-53f0-a782-8f0c9d00eaf4,Comprador Silencioso 02,silencioso02@example.com,+5511981000002,Regular,399.00,1,0.0
+147dd06b-2ab2-50ad-bb2b-f2495c7d9553,Comprador Silencioso 03,silencioso03@example.com,+5511981000003,Regular,399.00,1,0.0
+fbffed1f-d79b-54ae-94e9-b87f9bbd5617,Comprador Silencioso 04,silencioso04@example.com,+5511981000004,Regular,399.00,1,0.0
+74325309-a2a2-54b9-ae28-f6067ea2d1cb,Comprador Silencioso 05,silencioso05@example.com,+5511981000005,Regular,399.00,1,0.0
+4d72918e-71d6-51e7-bc12-2bc1293515dc,Comprador Silencioso 06,silencioso06@example.com,+5511981000006,Regular,399.00,1,0.0
+fb1f9646-acd5-572c-a929-d6b52c565f98,Comprador Silencioso 07,silencioso07@example.com,+5511981000007,Regular,399.00,1,0.0
+be8ae1e7-4973-5b00-96b9-965d7aa22404,Comprador Silencioso 08,silencioso08@example.com,+5511981000008,Regular,399.00,1,0.0
+30cc595f-109e-50a8-b807-ec220114b547,Comprador Silencioso 09,silencioso09@example.com,+5511981000009,Regular,399.00,1,0.0
+4c7ded53-8d4b-54ab-af59-31a5f73d29c3,Comprador Silencioso 10,silencioso10@example.com,+5511981000010,Regular,399.00,1,0.0
+585f69d8-3388-512a-8b14-41b5544e2910,Comprador Silencioso 11,silencioso11@example.com,+5511981000011,Regular,399.00,1,0.0
+a736cffc-1a2b-57c3-be84-b4cbec6101bc,Comprador Silencioso 12,silencioso12@example.com,+5511981000012,Regular,399.00,1,0.0
+dacf8cb8-91db-5824-9f61-3a112a2b7e58,Comprador Silencioso 13,silencioso13@example.com,+5511981000013,Regular,399.00,1,0.0
+72e2f197-17fe-5645-9c51-111155606e8e,Comprador Silencioso 14,silencioso14@example.com,+5511981000014,Regular,399.00,1,0.0
+25d6b393-c5c1-5f62-815a-60de4ea06326,Comprador Silencioso 15,silencioso15@example.com,+5511981000015,Regular,399.00,1,0.0
+b31763de-5ab0-58a2-8c43-2e0ff858579c,Comprador Silencioso 16,silencioso16@example.com,+5511981000016,Regular,399.00,1,0.0
+4463fe27-bed3-594c-aad1-752c2d786f1c,Comprador Silencioso 17,silencioso17@example.com,+5511981000017,Regular,399.00,1,0.0
+4ebe5cb7-705a-5c55-a7fb-666c6d02d7c4,Comprador Silencioso 18,silencioso18@example.com,+5511981000018,Regular,399.00,1,0.0
+4660023b-1871-5288-9dd0-0c16c924b47f,Comprador Silencioso 19,silencioso19@example.com,+5511981000019,Regular,399.00,1,0.0
+8bd06f09-68d8-531f-bf18-63d81c3ef38f,Comprador Silencioso 20,silencioso20@example.com,+5511981000020,Regular,399.00,1,0.0
+1ca6bb56-ff42-54ec-9458-96f2cb0f2f61,Comprador Silencioso 21,silencioso21@example.com,+5511981000021,Regular,399.00,1,0.0
+c9d08337-f3d3-5daf-8927-484912c60432,Comprador Silencioso 22,silencioso22@example.com,+5511981000022,Regular,399.00,1,0.0
+07777d66-a2bb-5ca7-912b-f74ea681693d,Comprador Silencioso 23,silencioso23@example.com,+5511981000023,Regular,399.00,1,0.0
+ee4b1518-0a8e-5b77-b715-452400223ff7,Comprador Silencioso 24,silencioso24@example.com,+5511981000024,Regular,399.00,1,0.0
+ff8e5ca4-7ccf-511c-b603-b0f49ef0c3be,Comprador Silencioso 25,silencioso25@example.com,+5511981000025,Regular,399.00,1,0.0
+2b38be85-f70c-546a-847e-50c2ad114d57,Comprador Silencioso 26,silencioso26@example.com,+5511981000026,Regular,399.00,1,0.0
+bf12e0e2-2ab6-5dab-95aa-d3189c901715,Comprador Silencioso 27,silencioso27@example.com,+5511981000027,Regular,399.00,1,0.0
+196f0b12-5c3c-51ef-93a9-f79ca6c24bca,Comprador Silencioso 28,silencioso28@example.com,+5511981000028,Regular,399.00,1,0.0
+8515a34f-d2f3-5255-b463-53ee2522b98f,Comprador Silencioso 29,silencioso29@example.com,+5511981000029,Regular,399.00,1,0.0
+0a9ec779-e6d1-5220-85a2-0426be858835,Comprador Silencioso 30,silencioso30@example.com,+5511981000030,Regular,399.00,1,0.0
+62219d56-ab98-5146-b866-857301661a07,Cliente Lote Anterior 01,lote.anterior01@example.com,+5511982000001,Regular,399.00,1,0.0
+41588d7e-e668-5638-bb1e-67e4977380e6,Cliente Lote Anterior 02,lote.anterior02@example.com,+5511982000002,Regular,399.00,1,0.0

@@ -22,7 +22,7 @@ EXPECTED_TOOLS = {
     "check_batch_failure_rate",
     "find_silent_customers",
     "block_batch",
-    "mark_alerts_sent",
+    "queue_alerts",
     "get_batch_defect_symptoms",
 }
 

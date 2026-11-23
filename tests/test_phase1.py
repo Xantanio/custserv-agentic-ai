@@ -66,51 +66,44 @@ def test_orders_csv_integrity():
 
 
 def test_historic_defect_ratio_baseline():
-    """Verify that LOTE-2026-DEF has exactly 49 defective tickets recorded,
+    """LOTE-2026-DEF tem 49 UNIDADES distintas com defeito (49/100 = 49%).
 
-    which equals 49 / 100 = 49% baseline failure rate.
+    Há 51 tickets de defeito no lote (uma unidade reclamada duas vezes e uma
+    reclamação sem serial): contar tickets daria 51% e dispararia o bloqueio
+    por engano. A taxa correta conta seriais distintos (6.2).
     """
-    tickets_path = DATA_DIR / "historic_tickets.csv"
-    orders_path = DATA_DIR / "orders.csv"
-
-    with open(orders_path, "r", encoding="utf-8") as f:
+    with open(DATA_DIR / "orders.csv", "r", encoding="utf-8") as f:
         order_to_batch = {row["order_id"]: row["batch_id"] for row in csv.DictReader(f)}
-
-    with open(tickets_path, "r", encoding="utf-8") as f:
+    with open(DATA_DIR / "historic_tickets.csv", "r", encoding="utf-8") as f:
         tickets = list(csv.DictReader(f))
 
-    def_batch_tickets = [
+    def_tickets = [
         t for t in tickets
         if order_to_batch.get(t["order_id"]) == "LOTE-2026-DEF" and t["intent"] == "defective_item"
     ]
+    distinct_serials = {t["serial_number"] for t in def_tickets if t["serial_number"]}
 
-    assert len(def_batch_tickets) == 49, f"Expected 49 baseline defect tickets, got {len(def_batch_tickets)}"
+    assert len(def_tickets) == 51
+    assert len(distinct_serials) == 49, f"Expected 49 distinct units, got {len(distinct_serials)}"
 
 
 def test_silent_customers_ready_for_proactive_alert():
-    """Verify that there are orders for LOTE-2026-DEF whose customers
+    """Há pedidos do LOTE-2026-DEF sem reclamação de defeito (candidatos ao alerta).
 
-    have not filed any complaint yet and proactive_alert_sent == False.
+    Elegibilidade por pedido (6.2); nenhum alerta existe ainda no seed.
     """
-    orders_path = DATA_DIR / "orders.csv"
-    tickets_path = DATA_DIR / "historic_tickets.csv"
-
-    with open(tickets_path, "r", encoding="utf-8") as f:
-        complaining_customers = {row["customer_id"] for row in csv.DictReader(f)}
-
-    with open(orders_path, "r", encoding="utf-8") as f:
+    with open(DATA_DIR / "historic_tickets.csv", "r", encoding="utf-8") as f:
+        complained_orders = {row["order_id"] for row in csv.DictReader(f)}
+    with open(DATA_DIR / "orders.csv", "r", encoding="utf-8") as f:
         orders = list(csv.DictReader(f))
 
     silent_orders = [
         o for o in orders
-        if o["batch_id"] == "LOTE-2026-DEF"
-        and o["customer_id"] not in complaining_customers
-        and o["proactive_alert_sent"].lower() in ("false", "0", "f")
+        if o["batch_id"] == "LOTE-2026-DEF" and o["order_id"] not in complained_orders
     ]
-
-    # Mariana (who will complain next), Lucas Silencioso, Beatriz Silenciosa, Fernanda Alergia
-    assert len(silent_orders) >= 3, "Expected at least 3 silent customer orders for LOTE-2026-DEF"
-
+    # Mariana (reclamará depois), Lucas, Beatriz, Fernanda e 30 compradores silenciosos
+    assert len(silent_orders) == 34
+    assert {"ORD-20050", "ORD-20051", "ORD-20052", "ORD-30001"} <= {o["order_id"] for o in silent_orders}
 
 
 def test_pydantic_v2_schemas():
@@ -183,6 +176,7 @@ def test_sqlalchemy_table_metadata():
     assert "is_blocked" in batch_cols
     assert "proactive_recall_triggered" in batch_cols
 
-    # Check order columns
+    # O booleano de alerta foi substituído por proactive_alert_events
     order_cols = {c.name for c in tables["orders"].columns}
-    assert "proactive_alert_sent" in order_cols
+    assert "proactive_alert_sent" not in order_cols
+    assert "carrier" in order_cols

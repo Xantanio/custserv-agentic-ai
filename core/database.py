@@ -14,9 +14,10 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    UniqueConstraint,
     Enum as SQLEnum,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -95,6 +96,25 @@ class AutonomyStatus(str, enum.Enum):
     ESCALATED_SPECIALIST = "escalated_specialist"
 
 
+class AlertStatus(str, enum.Enum):
+    """Ciclo de vida de um alerta proativo. Só `delivered` conta como enviado."""
+
+    PENDING = "pending"
+    ATTEMPTED = "attempted"
+    FAILED = "failed"
+    DELIVERED = "delivered"
+
+
+class AuditKind(str, enum.Enum):
+    """Natureza do evento de auditoria (princípio 6 do CLAUDE.md)."""
+
+    MODEL_INTERPRETATION = "model_interpretation"
+    TOOL_RESULT = "tool_result"
+    RULE_APPLIED = "rule_applied"
+    DECISION = "decision"
+    ACTION = "action"
+
+
 # -----------------------------------------------------------------------------
 # Models
 # -----------------------------------------------------------------------------
@@ -137,6 +157,7 @@ class Batch(Base):
 
     # Relationships
     orders: Mapped[list["Order"]] = relationship("Order", back_populates="batch")
+    units: Mapped[list["Unit"]] = relationship("Unit", back_populates="batch")
 
 
 class Order(Base):
@@ -154,9 +175,7 @@ class Order(Base):
     carrier_status: Mapped[CarrierStatus] = mapped_column(
         SQLEnum(CarrierStatus, native_enum=False), nullable=False, default=CarrierStatus.IN_TRANSIT
     )
-    proactive_alert_sent: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    carrier: Mapped[str] = mapped_column(String(50), nullable=False)
     purchase_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -165,6 +184,35 @@ class Order(Base):
     customer: Mapped["Customer"] = relationship("Customer", back_populates="orders")
     batch: Mapped["Batch"] = relationship("Batch", back_populates="orders")
     tickets: Mapped[list["Ticket"]] = relationship("Ticket", back_populates="order")
+    units: Mapped[list["Unit"]] = relationship("Unit", back_populates="order")
+    alert_events: Mapped[list["ProactiveAlertEvent"]] = relationship(
+        "ProactiveAlertEvent", back_populates="order"
+    )
+
+
+class Unit(Base):
+    """Unidade física produzida, identificada pelo número de série (D6, D10).
+
+    A taxa de falha conta unidades distintas, não tickets; `production_line` e
+    `manufactured_at` existem para a investigação de causa raiz.
+    """
+
+    __tablename__ = "units"
+
+    serial_number: Mapped[str] = mapped_column(String(20), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("batches.batch_id"), nullable=False, index=True
+    )
+    product_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    order_id: Mapped[str | None] = mapped_column(
+        String(100), ForeignKey("orders.order_id"), nullable=True, index=True
+    )
+    production_line: Mapped[str] = mapped_column(String(10), nullable=False)
+    manufactured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Relationships
+    batch: Mapped["Batch"] = relationship("Batch", back_populates="units")
+    order: Mapped[Order | None] = relationship("Order", back_populates="units")
 
 
 class Ticket(Base):
@@ -179,6 +227,10 @@ class Ticket(Base):
     )
     order_id: Mapped[str | None] = mapped_column(
         String(100), ForeignKey("orders.order_id"), nullable=True, index=True
+    )
+    # NULL = unidade não identificada (fica fora do numerador da taxa de falha)
+    serial_number: Mapped[str | None] = mapped_column(
+        String(20), ForeignKey("units.serial_number"), nullable=True, index=True
     )
     channel: Mapped[ChannelType] = mapped_column(
         SQLEnum(ChannelType, native_enum=False), nullable=False
@@ -206,3 +258,66 @@ class Ticket(Base):
     # Relationships
     customer: Mapped["Customer"] = relationship("Customer", back_populates="tickets")
     order: Mapped[Order | None] = relationship("Order", back_populates="tickets")
+
+
+class ProactiveAlertEvent(Base):
+    """Registro de um alerta proativo de recall a um pedido (substitui o booleano).
+
+    Idempotência no banco: `UNIQUE(order_id)` garante no máximo um alerta por
+    pedido; novas tentativas atualizam `attempts` em vez de criar linhas.
+    Só conta como enviado com `status == delivered` (confirmação do provedor).
+    """
+
+    __tablename__ = "proactive_alert_events"
+    __table_args__ = (UniqueConstraint("order_id", name="uq_alert_per_order"),)
+
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    order_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("orders.order_id"), nullable=False, index=True
+    )
+    status: Mapped[AlertStatus] = mapped_column(
+        SQLEnum(AlertStatus, native_enum=False), nullable=False, default=AlertStatus.PENDING
+    )
+    template_id: Mapped[str] = mapped_column(
+        String(100), nullable=False, doc="Template aprovado usado na mensagem (D11)"
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    order: Mapped["Order"] = relationship("Order", back_populates="alert_events")
+
+
+class AuditEvent(Base):
+    """Trilha de auditoria por `thread_id` (princípio 6).
+
+    Distingue interpretação do modelo, resultado de ferramenta, regra aplicada,
+    decisão do código e ação executada. O payload não deve conter dados
+    pessoais desnecessários.
+    """
+
+    __tablename__ = "audit_events"
+
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    kind: Mapped[AuditKind] = mapped_column(SQLEnum(AuditKind, native_enum=False), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    rule_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )

@@ -1,4 +1,9 @@
-"""Populates PostgreSQL with initial synthetic datasets from data/*.csv."""
+"""Popula o PostgreSQL a partir de data/*.csv.
+
+Idempotente: linhas já existentes (mesma PK) são ignoradas. Datas vêm em ISO 8601
+com fuso (UTC). Ordem de carga respeita as FKs: lotes, clientes, pedidos,
+unidades e, por fim, tickets (que referenciam unidades pelo serial).
+"""
 
 import asyncio
 import csv
@@ -17,6 +22,7 @@ from core.database import (
     Batch,
     Order,
     Ticket,
+    Unit,
     CustomerTier,
     CarrierStatus,
     ChannelType,
@@ -104,12 +110,36 @@ async def seed_orders(session) -> None:
                     batch_id=row["batch_id"],
                     order_value=Decimal(row["order_value"]),
                     carrier_status=CarrierStatus(row["carrier_status"]),
-                    proactive_alert_sent=row["proactive_alert_sent"].lower() in ("true", "1", "t"),
-                    purchase_date=datetime.strptime(row["purchase_date"], "%Y-%m-%d %H:%M:%S"),
+                    carrier=row["carrier"],
+                    purchase_date=datetime.fromisoformat(row["purchase_date"]),
                 )
                 session.add(order)
     await session.commit()
     logger.info("Orders seeded successfully.")
+
+
+async def seed_units(session) -> None:
+    file_path = DATA_DIR / "units.csv"
+    if not file_path.exists():
+        logger.warning("units.csv not found, skipping.")
+        return
+
+    logger.info("Seeding units from %s...", file_path)
+    with open(file_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            existing = await session.get(Unit, row["serial_number"])
+            if not existing:
+                session.add(Unit(
+                    serial_number=row["serial_number"],
+                    batch_id=row["batch_id"],
+                    product_id=row["product_id"],
+                    order_id=row["order_id"] or None,
+                    production_line=row["production_line"],
+                    manufactured_at=datetime.fromisoformat(row["manufactured_at"]),
+                ))
+    await session.commit()
+    logger.info("Units seeded successfully.")
 
 
 async def seed_historic_tickets(session) -> None:
@@ -129,7 +159,8 @@ async def seed_historic_tickets(session) -> None:
                     ticket_id=ticket_id,
                     thread_id=row["thread_id"],
                     customer_id=uuid.UUID(row["customer_id"]),
-                    order_id=row["order_id"] if row["order_id"] else None,
+                    order_id=row["order_id"] or None,
+                    serial_number=row["serial_number"] or None,
                     channel=ChannelType(row["channel"]),
                     message_text=row["message_text"],
                     intent=row["intent"],
@@ -139,7 +170,7 @@ async def seed_historic_tickets(session) -> None:
                     batch_flagged=row["batch_flagged"].lower() in ("true", "1", "t"),
                     priority_score=int(row["priority_score"]),
                     autonomy_status=AutonomyStatus(row["autonomy_status"]),
-                    created_at=datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S"),
+                    created_at=datetime.fromisoformat(row["created_at"]),
                 )
                 session.add(ticket)
     await session.commit()
@@ -155,6 +186,7 @@ async def main() -> None:
         await seed_batches(session)
         await seed_customers(session)
         await seed_orders(session)
+        await seed_units(session)
         await seed_historic_tickets(session)
 
     logger.info("Database seeding completed.")

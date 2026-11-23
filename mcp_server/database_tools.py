@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import AsyncSessionLocal, Customer, Order, Ticket, Batch
+from core.database import AsyncSessionLocal, Customer, Order, ProactiveAlertEvent, Ticket
 
 
 async def get_customer(
@@ -65,6 +65,12 @@ async def get_order(
         if not order:
             return {"found": False, "error": f"Order {order_id} not found"}
 
+        alert = (
+            await s.execute(
+                select(ProactiveAlertEvent.status).where(ProactiveAlertEvent.order_id == order.order_id)
+            )
+        ).scalar_one_or_none()
+
         return {
             "found": True,
             "order_id": order.order_id,
@@ -73,7 +79,8 @@ async def get_order(
             "batch_id": order.batch_id,
             "order_value": float(order.order_value),
             "carrier_status": order.carrier_status.value if hasattr(order.carrier_status, "value") else str(order.carrier_status),
-            "proactive_alert_sent": order.proactive_alert_sent,
+            "carrier": order.carrier,
+            "proactive_alert_status": alert.value if alert else None,
             "purchase_date": order.purchase_date.isoformat(),
         }
 
@@ -122,6 +129,8 @@ async def get_customer_history(
                 {
                     "ticket_id": str(t.ticket_id),
                     "thread_id": t.thread_id,
+                    "order_id": t.order_id,
+                    "serial_number": t.serial_number,
                     "intent": t.intent,
                     "sentiment_score": float(t.sentiment_score),
                     "sentiment_label": t.sentiment_label.value if hasattr(t.sentiment_label, "value") else str(t.sentiment_label),
