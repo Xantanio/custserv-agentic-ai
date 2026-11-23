@@ -41,7 +41,7 @@ Python 3.11+ (Docker usa 3.12) · FastAPI · Pydantic v2 · SQLAlchemy 2.0 async
 - É possível ter **papéis** com modelos diferentes (ex.: `investigator`, `generalist`, `judge`, `translator`), cada um configurável.
 - Testes usam um chat model falso e determinístico; só um *smoke test* separado e opcional fala com o Ollama real.
 - Agentes que chamam ferramentas exigem um modelo com **suporte a tool calling**. Confirmar com `ollama show <modelo>` (campo `capabilities`) antes de adotar.
-- **Ambiente de desenvolvimento (D19):** o Ollama roda em um **PC Windows separado** do dono (GPU RTX com **4 GB de VRAM** e **8 GB de RAM DDR4**), acessado por VPN (seção 12). O notebook de desenvolvimento não precisa de GPU. Isso limita a modelos de ~3–4B parâmetros em quantização de 4 bits. Padrão inicial: `qwen3:4b` (aprox. 2,5 GB, cabe na VRAM). Configurar também `LLM_NUM_CTX` (janela de contexto; consome VRAM), `LLM_TEMPERATURE=0` para agentes e o modo de raciocínio (*thinking*) por papel. Ver 8.2 para o desenho voltado a modelos pequenos.
+- **Ambiente de desenvolvimento (D19):** o Ollama roda em um **PC Windows separado** do dono (GPU RTX com **4 GB de VRAM** e **8 GB de RAM DDR4**), acessado por VPN (seção 12). O notebook de desenvolvimento não precisa de GPU. Isso limita a modelos de ~3–4B parâmetros em quantização de 4 bits. Padrão: **`qwen3:4b-instruct`** (D20; aprox. 2,5 GB de pesos, mas não cabe inteiro na VRAM útil). Configurar também `LLM_NUM_CTX` (janela de contexto; consome VRAM; padrão 4096), `LLM_TEMPERATURE=0` para agentes e o modo de raciocínio (*thinking*) por papel. Ver 8.2 para o desenho voltado a modelos pequenos.
 
 ## 4. Estrutura do repositório (alvo)
 
@@ -105,6 +105,7 @@ omniops-ai/
 | D17 | **Ordem: o agente investigador primeiro**, como fatia vertical | Mostra um agente autônomo funcionando e avaliável cedo; o orquestrador completo vem depois. |
 | D18 | **Este arquivo substitui `omniops_ai_master_specification.md`** | Uma única fonte da verdade, mantida atualizada ao fim de cada etapa. |
 | D19 | **Ollama em um PC Windows dedicado (RTX 4 GB VRAM, 8 GB RAM), acessado por VPN a partir do notebook de desenvolvimento, ou usado localmente quando o código roda no próprio Windows; modelo inicial `qwen3:4b`**; `qwen3:8b` como referência com offload parcial; API externa só para comparação | Hardware restrito: modelos pequenos erram de forma instrutiva e exigem controles (orçamentos, validação, retentativas, evals). A arquitetura modular permite comparar com modelo maior sem mudar o código. |
+| D20 | **Modelo padrão `qwen3:4b-instruct` e `LLM_NUM_CTX=4096`**; `qwen3:4b` (variante *Thinking-2507*) fica só como comparação na Etapa 6 | Medido em 2026-11-23 (Ollama 0.40.17, RTX 3050 Laptop): VRAM útil ~3,2 GB (o Windows usa ~730 MB). A tag `qwen3:4b` é *thinking-only*: ignora `think:false` e `/no_think` e gerou 600–1000 tokens para uma frase (86–275 s). O instruct gerou ~40 tokens em 5,2 s com o modelo carregado. Com `num_ctx` 8192 o modelo vai 45% para a CPU; com 4096, 34%; ~8,6 tok/s nos dois casos. Temperatura 0 **não** garantiu saída idêntica entre execuções: as evals devem repetir cada caso |
 
 ## 6. Modelo de dados e fórmulas
 
@@ -266,10 +267,10 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 2. **Alerta proativo é booleano** (`orders.proactive_alert_sent`). Substituir por `proactive_alert_events` (6.1); `mark_proactive_alerts_sent` não pode marcar "enviado" sem confirmação do provedor.
 3. **"Cliente silencioso" calculado por cliente**, não por pedido/produto (`notin_(complaining_subq.customer_id)`). Corrigir para por pedido (6.2).
 4. **Falta `audit_events`** (6.1).
-5. **MCP Server usa stdio** (`run_stdio_async`), mas o compose expõe 8001 e README/`.env.example` assumem HTTP. Aplicar D1 e adicionar `healthcheck` ao serviço `mcp_server`.
-6. **`pyproject.toml`:** `mcp>=1.0.0` → `mcp>=2,<3` (D2). Revisar `include`/`exclude` de pacotes; incluir `classifiers*` e `llm*` quando existirem. Adicionar dependências das etapas conforme chegarem.
-7. **`.env.example` e `core/config.py`:** adicionar `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (e, se o Jev for usado, `TYPESAFE_API_KEY` e `TYPESAFE_DEFAULT_MODEL`). Nenhuma credencial no código.
-8. Menores: `seed_db.py` insere datas sem fuso, mas os modelos usam `DateTime(timezone=True)` (padronizar UTC); `get_customer` normaliza e-mail e não telefone (normalizar para E.164); confirmar que `.gitignore` cobre `.env`, `__pycache__/` e ambientes virtuais. **Não leia nem comite o `.env` real.**
+5. ~~MCP Server usa stdio~~ **resolvido na Etapa 0:** streamable HTTP em `MCP_SERVER_HOST:MCP_SERVER_PORT/mcp`, rota `/health` fora do protocolo e `healthcheck` no compose. Teste: `tests/test_mcp_transport.py` (cliente MCP real, sem Postgres). Nota: com `MCP_SERVER_HOST=0.0.0.0` a proteção contra DNS rebinding da biblioteca fica desligada (necessário para `mcp_server:8001` no Docker); fora do Docker, o MCP escuta em todas as interfaces.
+6. **`pyproject.toml`:** ~~`mcp>=2,<3`~~ feito (instalado 2.3.0). Pendente: incluir `classifiers*` e `llm*` no `include` quando existirem; adicionar dependências das etapas conforme chegarem.
+7. ~~`.env.example` e `core/config.py`~~ **resolvido na Etapa 0:** `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (`SecretStr`), `LLM_TEMPERATURE`, `LLM_NUM_CTX`, `LLM_TIMEOUT_SECONDS`; `LLM_DOCKER_BASE_URL` (URL vista de dentro dos containers; `host.docker.internal` com `extra_hosts: host-gateway`). Variáveis `OPENAI_*` removidas. Se o Jev for usado, adicionar `TYPESAFE_API_KEY` e `TYPESAFE_DEFAULT_MODEL`.
+8. Menores: `seed_db.py` insere datas sem fuso, mas os modelos usam `DateTime(timezone=True)` (padronizar UTC); `get_customer` normaliza e-mail e não telefone (normalizar para E.164). `.gitignore` cobre `.env`, `__pycache__/` e `.venv/` (ok); `.gitattributes` criado (Etapa 0). **Não leia nem comite o `.env` real.**
 
 ## 10. Roteiro por etapas (investigador primeiro — D17)
 
@@ -277,7 +278,7 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, e propos
 
 | Etapa | Entrega | Conceito a explicar |
 |---|---|---|
-| 0 | Preparação: `mcp>=2,<3`, MCP via HTTP + healthcheck, variáveis `LLM_*` no `.env.example`/`config.py`, preparar o PC Windows como servidor de Ollama (seção 12), baixar `qwen3:4b` e validar a conexão a partir do notebook com `curl` pela VPN. O código no notebook usa `LLM_BASE_URL` apontando para o PC (modo A) | Transportes MCP; pinagem de dependências; configuração por ambiente |
+| 0 ✅ | Preparação: `mcp>=2,<3`, MCP via HTTP + healthcheck, variáveis `LLM_*` no `.env.example`/`config.py`, preparar o PC Windows como servidor de Ollama (seção 12), baixar `qwen3:4b` e validar a conexão a partir do notebook com `curl` pela VPN. O código no notebook usa `LLM_BASE_URL` apontando para o PC (modo A) | Transportes MCP; pinagem de dependências; configuração por ambiente |
 | 1 | Modelo de dados: `units`, `tickets.serial_number`, `proactive_alert_events`, `audit_events`; CSVs e seed com **causa `L2` plantada**, gerados com semente fixa e IDs determinísticos (`uuid5`) para reprodutibilidade entre máquinas | Modelar estado com efeitos externos; idempotência; criar dados que tornam um agente avaliável |
 | 2 | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
 | 3 | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
@@ -349,7 +350,8 @@ O `.env` não vai para o git e é específico de cada máquina; o `.env.example`
 
 ## 13. Perguntas em aberto
 
-- VPN entre o notebook e o PC Windows (seção 12): qual solução será usada (Tailscale, WireGuard, ZeroTier...)? Anotar o IP do PC na VPN e testar `curl http://<ip-da-vpn>:11434/api/tags`. Para o modo B, definir se o Postgres no Windows será nativo ou via Docker Desktop.
+- VPN entre o notebook e o PC Windows (seção 12): qual solução será usada (Tailscale, WireGuard, ZeroTier...)? Anotar o IP do PC na VPN e testar `curl http://<ip-da-vpn>:11434/api/tags`. Modo B: Postgres via **Docker Desktop** (decidido em 2026-11-23).
+- Opcional para caber mais na VRAM: `OLLAMA_FLASH_ATTENTION=1` e `OLLAMA_KV_CACHE_TYPE=q8_0` no Windows (KV cache pela metade). Medir antes e depois.
 - Medir, na Etapa 6, se `qwen3:4b` basta para o investigador ou se vale comparar com `qwen3:8b` (offload) e com uma API externa de baixo custo.
 - Valores finais dos guardrails (7.2): confirmar limiares, teto diário e limite de `return_rate`; definir as listas de palavras-chave (saúde, ameaça judicial, "caixa vazia").
 - Resposta ao cliente que informa um serial inexistente ou de outro lote: pedir confirmação ou escalar a humano?

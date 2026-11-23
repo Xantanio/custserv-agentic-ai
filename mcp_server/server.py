@@ -18,7 +18,10 @@ import logging
 from typing import Optional, List
 
 from mcp.server.mcpserver import MCPServer
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
+from core.config import settings
 from core.database import init_db
 from mcp_server.database_tools import get_customer, get_order, get_customer_history
 from mcp_server.inventory_tools import (
@@ -142,14 +145,37 @@ async def get_batch_defect_symptoms(batch_id: str, limit: int = 5) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Health check (fora do protocolo MCP)
+# ---------------------------------------------------------------------------
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request: Request) -> JSONResponse:
+    """Endpoint HTTP simples para o healthcheck do Docker.
+
+    Fica fora do protocolo MCP de propósito: verificar se o processo está vivo
+    não deveria exigir abrir uma sessão MCP completa.
+    """
+    return JSONResponse({"status": "ok", "service": "omniops-mcp"})
+
+
+# ---------------------------------------------------------------------------
 # Server Entrypoint
 # ---------------------------------------------------------------------------
 async def start_server():
-    """Initialize the database and start the MCP server via stdio."""
+    """Inicializa o banco e sobe o MCP Server via streamable HTTP (D1).
+
+    Endpoint MCP: http://<host>:<porta>/mcp · Health: http://<host>:<porta>/health
+    """
     logger.info("Initializing database connection...")
     await init_db()
-    logger.info("OmniOps MCP Server starting (stdio transport)...")
-    await mcp.run_stdio_async()
+    logger.info(
+        "OmniOps MCP Server starting (streamable HTTP) on %s:%s/mcp",
+        settings.MCP_SERVER_HOST,
+        settings.MCP_SERVER_PORT,
+    )
+    await mcp.run_streamable_http_async(
+        host=settings.MCP_SERVER_HOST,
+        port=settings.MCP_SERVER_PORT,
+    )
 
 
 def main():

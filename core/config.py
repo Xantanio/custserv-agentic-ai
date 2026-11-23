@@ -1,5 +1,6 @@
-from typing import Optional
-from pydantic import Field
+from typing import Literal, Optional
+
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,10 +43,23 @@ class Settings(BaseSettings):
         description="Internal notification webhook for operations/engineering specialists",
     )
 
-    # LLM Provider
-    OPENAI_API_KEY: str = Field(default="mock-openai-key")
-    OPENAI_BASE_URL: Optional[str] = Field(default=None)
-    LLM_MODEL: str = Field(default="gpt-4o-mini")
+    # LLM (D13/D19): provedor trocável por configuração.
+    # Modo A (código no notebook): LLM_BASE_URL=http://<ip-da-vpn-do-pc>:11434
+    # Modo B (código no PC Windows): LLM_BASE_URL=http://localhost:11434
+    LLM_PROVIDER: Literal["ollama", "openai_compatible"] = Field(
+        default="ollama",
+        description="Provedor do chat model; a fábrica em llm/factory.py escolhe a implementação",
+    )
+    LLM_BASE_URL: str = Field(default="http://localhost:11434")
+    LLM_MODEL: str = Field(default="qwen3:4b-instruct")
+    LLM_API_KEY: Optional[SecretStr] = Field(
+        default=None, description="Só para APIs externas; o Ollama não usa chave"
+    )
+    LLM_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    LLM_NUM_CTX: int = Field(
+        default=4096, gt=0, description="Janela de contexto do Ollama; consome VRAM (ver D20)"
+    )
+    LLM_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0)
 
     def get_database_url(self) -> str:
         if self.DATABASE_URL:
