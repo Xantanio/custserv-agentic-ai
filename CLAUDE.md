@@ -6,6 +6,7 @@ Fonte única da verdade deste repositório. Leia inteiro antes de qualquer taref
 
 Projeto **didático e de portfólio**. O dono quer se tornar **engenheiro de IA** e usa o projeto para entender a arquitetura de sistemas de agentes e multiagentes.
 
+- **Antes de começar qualquer alteração**, apresente: (1) a lista de arquivos que serão criados ou alterados; (2) o trade-off escolhido; (3) as alternativas descartadas e por quê. Só então edite.
 - **Explique o porquê**, não só o quê. Antes de cada etapa, diga em poucas linhas qual conceito ela ensina e qual alternativa foi descartada. Depois, resuma o que mudou e por que o design é assim.
 - **Ciclo de cada componente: implementar → fazer funcionar → medir → melhorar.** Nada de pular a medição: todo componente com modelo (classificador, agente, juiz) tem uma avaliação (eval) com casos conhecidos.
 - Quando houver trade-off real, apresente as opções e recomende uma, em vez de decidir em silêncio. Decisões de **produto simulado** (valores, formatos, nomes) podem ser tomadas por você, registrando-as aqui.
