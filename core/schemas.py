@@ -108,17 +108,35 @@ class BatchRead(BatchBase):
 
 
 class BatchFailureMetrics(BaseSchema):
+    """Saída de `calculate_batch_failure_rate` (CLAUDE.md 6.2).
+
+    A taxa conta UNIDADES distintas identificadas; reclamações sem serial e com
+    serial inconsistente aparecem à parte (a taxa pode subestimar a incidência real).
+    """
+
+    found: bool = True
     batch_id: str
     product_id: str
     product_name: str
-    total_units_produced: int
-    defective_tickets_count: int
-    failure_rate: float
-    is_critical: bool = Field(
-        description="True se taxa de defeitos >= 0.50 (50%)"
+    factory_code: str
+    manufacturing_date: date
+    total_units_produced: int = Field(..., gt=0)
+    defective_units_count: int = Field(..., ge=0, description="Numerador: seriais distintos do lote")
+    defective_tickets_count: int = Field(..., ge=0, description="Tickets de defeito brutos (transparência)")
+    unidentified_complaints_count: int = Field(
+        ..., ge=0, description="Reclamações do lote sem serial: fora do numerador"
     )
-    silent_customers_count: int = Field(
-        default=0, description="Total de clientes que compraram o lote e ainda não reclamaram"
+    inconsistent_serial_complaints_count: int = Field(
+        ..., ge=0, description="Serial de outro pedido/lote: fora do numerador, vai para HITL"
+    )
+    failure_rate: float = Field(..., ge=0.0, le=1.0)
+    critical_threshold: float
+    is_critical: bool = Field(description="True se taxa >= limiar (policy_config)")
+    rule_id: str
+    is_blocked: bool
+    proactive_recall_triggered: bool
+    silent_orders_count: int = Field(
+        default=0, ge=0, description="Pedidos do lote elegíveis ao alerta proativo (por pedido)"
     )
 
 

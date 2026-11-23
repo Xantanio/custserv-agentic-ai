@@ -217,7 +217,7 @@ async def test_only_delivered_alert_removes_order_from_silent_list(db_session):
     await _minimal_batch(db_session)
     await queue_proactive_alerts("LOTE-T", ["O-1", "O-2"], session=db_session)
     pending = await get_silent_customers("LOTE-T", session=db_session)
-    assert pending["silent_customers_count"] == 2, "pending ainda não conta como enviado"
+    assert pending["silent_orders_count"] == 2, "pending ainda não conta como enviado"
 
     event = (await db_session.execute(
         select(ProactiveAlertEvent).where(ProactiveAlertEvent.order_id == "O-1")
@@ -225,7 +225,7 @@ async def test_only_delivered_alert_removes_order_from_silent_list(db_session):
     event.status = AlertStatus.DELIVERED
     await db_session.commit()
     after = await get_silent_customers("LOTE-T", session=db_session)
-    assert [c["order_id"] for c in after["silent_customers"]] == ["O-2"]
+    assert [c["order_id"] for c in after["silent_orders"]] == ["O-2"]
 
 
 @pytest.mark.integration

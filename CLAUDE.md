@@ -74,7 +74,7 @@ omniops-ai/
 │   └── investigation_tools.py     [novo]  ferramentas de leitura/agregação para o investigador
 ├── core/                          [ok]
 │   ├── config.py, database.py, schemas.py
-│   └── policy_config.py           [novo]  limiares e listas de palavras-chave
+│   └── policy_config.py           [ok]    limiares (lote: Etapa 2) · [novo] palavras-chave (Etapa 7)
 ├── data/                          [ok]  customers.csv, batches.csv, orders.csv, historic_tickets.csv · [novo] units.csv
 ├── scripts/                       [ok]  generate_synthetic_data.py, seed_db.py · [novo] simulate_traffic.py, run_investigation.py
 ├── ui/app.py                      [novo]  Streamlit
@@ -107,6 +107,7 @@ omniops-ai/
 | D19 | **Ollama em um PC Windows dedicado (RTX 4 GB VRAM, 8 GB RAM), acessado por VPN a partir do notebook de desenvolvimento, ou usado localmente quando o código roda no próprio Windows; modelo inicial `qwen3:4b`**; `qwen3:8b` como referência com offload parcial; API externa só para comparação | Hardware restrito: modelos pequenos erram de forma instrutiva e exigem controles (orçamentos, validação, retentativas, evals). A arquitetura modular permite comparar com modelo maior sem mudar o código. |
 | D20 | **Modelo padrão `qwen3:4b-instruct` e `LLM_NUM_CTX=4096`**; `qwen3:4b` (variante *Thinking-2507*) fica só como comparação na Etapa 6 | Medido em 2026-11-23 (Ollama 0.40.17, RTX 3050 Laptop): VRAM útil ~3,2 GB (o Windows usa ~730 MB). A tag `qwen3:4b` é *thinking-only*: ignora `think:false` e `/no_think` e gerou 600–1000 tokens para uma frase (86–275 s). O instruct gerou ~40 tokens em 5,2 s com o modelo carregado. Com `num_ctx` 8192 o modelo vai 45% para a CPU; com 4096, 34%; ~8,6 tok/s nos dois casos. Temperatura 0 **não** garantiu saída idêntica entre execuções: as evals devem repetir cada caso |
 | D21 | **Cenário sintético da Etapa 1:** lote DEF com 50 unidades em `L1` e 50 em `L2`; 49 defeitos históricos (45 `L2` ≈ 92%); a unidade de Mariana (`ORD-20050`) reservada na `L2`; 1 unidade reclamada 2× e 1 reclamação sem serial (51 tickets, 49 unidades); 30 compradores silenciosos (`ORD-20054..20083`); `ORD-20052` com 2 unidades; `LOTE-2026-SEP` (mesma fábrica, ~2%) para comparação; coluna `orders.carrier`; **distratores de taxa-base** (RotaSul ≈ 50% do volume; semana de promoção); "bateria estufada" com `is_health_risk=True` (risco de incêndio) | Torna o investigador avaliável (causa conhecida) e exige raciocínio com taxa-base, não contagem bruta. Gerado com `SEED=42` e `uuid5`; `test_generator_is_deterministic` garante que os CSVs versionados batem com o gerador |
+| D22 | **Ticket com serial válido do lote e sem pedido informado conta no numerador**; serial que não corresponde ao pedido citado (outro lote, outro pedido ou unidade em estoque) não conta em lote nenhum e vai para HITL | O serial identifica a unidade física; subcontar atrasaria a contenção de um risco de segurança (bateria estufada). A posse da unidade é verificada depois, no HITL. Inconsistência nunca infla nenhum lote |
 
 ## 6. Modelo de dados e fórmulas
 
@@ -131,9 +132,10 @@ taxa = unidades distintas identificadas com defeito no lote / total_units_produc
 - Numerador: `COUNT(DISTINCT tickets.serial_number)` dos tickets `defective_item` do lote com serial não nulo. Várias reclamações da mesma unidade contam **uma**.
 - Reclamações sem serial identificável são contadas **à parte**, fora do numerador, e exibidas junto da taxa (a taxa pode estar abaixo da incidência real).
 - Serial informado que não existe em `units` ou pertence a outro lote **não entra** no numerador e vai para HITL.
+- **Regra exata implementada (Etapa 2, D22):** um ticket `defective_item` entra no numerador se `units.batch_id = lote` **e** (`tickets.order_id IS NULL` **ou** `tickets.order_id IS NOT DISTINCT FROM units.order_id`). Tickets ligados ao lote (pelo pedido ou pelo serial) que têm serial mas falham nessa condição são `inconsistent_serial_complaints_count` (HITL). Serial inexistente não pode ser gravado (FK): o ticket fica com `serial_number NULL` e cai em `unidentified_complaints_count`. Limiar `>= 0.50` em `core/policy_config.py` (`Decimal`, `rule_id = batch.failure_rate.critical_v1`). Saída validada por `BatchFailureMetrics`.
 - **Taxa ≥ 0.50:** (1) marca `batch_flagged` no ticket e bloqueia o lote (`is_blocked = true`); (2) alerta proativo aos "clientes silenciosos"; (3) aciona o especialista humano (A2A) com dossiê e dispara o investigador.
 
-**Clientes silenciosos:** a elegibilidade é **por pedido**. Um pedido do lote é elegível se não há reclamação de defeito referente ao produto/lote daquele pedido e não há alerta com status `delivered`.
+**Clientes silenciosos:** a elegibilidade é **por pedido**. Um pedido do lote é elegível se não há reclamação de defeito referente ao produto/lote daquele pedido e não há alerta com status `delivered`. Implementado como: não existe ticket `defective_item` com `order_id` = pedido **ou** com serial de uma unidade do pedido; e não existe `proactive_alert_events` `delivered` do pedido. Outros pedidos do mesmo cliente não interferem. A ferramenta devolve `silent_orders` (com contato do cliente: **nunca** entregá-la ao investigador; menor privilégio/LGPD).
 
 **Priority score** (ordena a fila, não autoriza ações):
 
@@ -258,7 +260,7 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 ## 9. Estado atual do código (auditoria de 2026-11-23)
 
-**Existe:** `core/{config,database,schemas}.py` · `mcp_server/{server,database_tools,inventory_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model}.py` · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
+**Existe:** `core/{config,database,schemas,policy_config}.py` · `mcp_server/{server,database_tools,inventory_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules}.py` · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
 
 **Testes de integração** (`@pytest.mark.integration`): usam o banco `<POSTGRES_DB>_test` (criado automaticamente, esquema recriado a cada execução, rollback por teste); são pulados se o Postgres não responder. Nunca tocam o banco de desenvolvimento.
 
@@ -266,9 +268,9 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 **Divergências a corrigir, em ordem:**
 
-1. **Taxa de falha conta tickets, não unidades distintas** (`count(Ticket.ticket_id)`). **Modelo e dados resolvidos na Etapa 1** (`units`, `tickets.serial_number`, `data/units.csv`, causa `L2`, duplicata e sem serial; D21). **Pendente (Etapa 2):** a consulta em `calculate_batch_failure_rate` ainda conta tickets e hoje devolve **0.51 / `is_critical: true` com só 49 unidades**: falso positivo que bloquearia o lote. Corrigir com `COUNT(DISTINCT serial_number)` via `units.batch_id`, contagem à parte de "sem serial" e validação do serial.
+1. ~~Taxa de falha conta tickets~~ **resolvido nas Etapas 1 e 2:** modelo e dados (D21) e consulta por `COUNT(DISTINCT serial)` (D22). Antes devolvia 0.51 / crítico com 49 unidades; agora 0.49 / não crítico. Testes em `tests/test_batch_rules.py`.
 2. ~~Alerta proativo é booleano~~ **resolvido na Etapa 1:** `proactive_alert_events`; a ferramenta `mark_alerts_sent` virou `queue_alerts` (`queue_proactive_alerts`), que só cria `pending` de forma idempotente. Falta o fluxo de envio/confirmação do provedor (Etapa 8).
-3. **"Cliente silencioso" calculado por cliente**, não por pedido/produto (`notin_(complaining_subq.customer_id)`). Corrigir para por pedido (6.2) na Etapa 2. Já considera só alertas `delivered`.
+3. ~~"Cliente silencioso" calculado por cliente~~ **resolvido na Etapa 2:** por pedido, com `EXISTS` correlacionado (`.correlate(Order)`) e só alertas `delivered`. A chave de saída mudou para `silent_orders` / `silent_orders_count`.
 4. ~~Falta `audit_events`~~ **tabela criada na Etapa 1**; a escrita de eventos entra com os agentes.
 5. ~~MCP Server usa stdio~~ **resolvido na Etapa 0:** streamable HTTP em `MCP_SERVER_HOST:MCP_SERVER_PORT/mcp`, rota `/health` fora do protocolo e `healthcheck` no compose. Teste: `tests/test_mcp_transport.py` (cliente MCP real, sem Postgres). Nota: com `MCP_SERVER_HOST=0.0.0.0` a proteção contra DNS rebinding da biblioteca fica desligada (necessário para `mcp_server:8001` no Docker); fora do Docker, o MCP escuta em todas as interfaces.
 6. **`pyproject.toml`:** ~~`mcp>=2,<3`~~ feito (instalado 2.3.0). Pendente: incluir `classifiers*` e `llm*` no `include` quando existirem; adicionar dependências das etapas conforme chegarem.
@@ -283,7 +285,7 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, e propos
 |---|---|---|
 | 0 ✅ | Preparação: `mcp>=2,<3`, MCP via HTTP + healthcheck, variáveis `LLM_*` no `.env.example`/`config.py`, preparar o PC Windows como servidor de Ollama (seção 12), baixar `qwen3:4b` e validar a conexão a partir do notebook com `curl` pela VPN. O código no notebook usa `LLM_BASE_URL` apontando para o PC (modo A) | Transportes MCP; pinagem de dependências; configuração por ambiente |
 | 1 ✅ | Modelo de dados: `units`, `tickets.serial_number`, `proactive_alert_events`, `audit_events`; CSVs e seed com **causa `L2` plantada**, gerados com semente fixa e IDs determinísticos (`uuid5`) para reprodutibilidade entre máquinas | Modelar estado com efeitos externos; idempotência; criar dados que tornam um agente avaliável |
-| 2 | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
+| 2 ✅ | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
 | 3 | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
 | 4 | `mcp_server/investigation_tools.py` com testes | Desenho de ferramentas para LLM: pequenas, tipadas, agregadas, seguras |
 | 5 | **Agente investigador v1** (subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |

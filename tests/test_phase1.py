@@ -113,6 +113,8 @@ def test_pydantic_v2_schemas():
         ProactiveAlertPayload,
         SpecialistDossierPayload,
     )
+    import datetime
+
     from core.database import ChannelType
 
     # 1. StandardTicket
@@ -128,22 +130,30 @@ def test_pydantic_v2_schemas():
     dumped = st.model_dump()
     assert dumped["channel"] == ChannelType.WHATSAPP
 
-    # 2. BatchFailureMetrics
+    # 2. BatchFailureMetrics (taxa por unidades distintas, 6.2)
     metrics = BatchFailureMetrics(
         batch_id="LOTE-2026-DEF",
         product_id="PROD-SMART-WATCH-X",
         product_name="Smartwatch Omni Pulse V2",
+        factory_code="FAC-SP-01",
+        manufacturing_date=datetime.date(2026, 10, 1),
         total_units_produced=100,
-        defective_tickets_count=50,
+        defective_units_count=50,
+        defective_tickets_count=52,
+        unidentified_complaints_count=1,
+        inconsistent_serial_complaints_count=0,
         failure_rate=0.50,
+        critical_threshold=0.50,
         is_critical=True,
-        silent_customers_count=4,
+        rule_id="batch.failure_rate.critical_v1",
+        is_blocked=False,
+        proactive_recall_triggered=False,
+        silent_orders_count=33,
     )
     assert metrics.is_critical is True
-    assert metrics.failure_rate >= 0.50
+    assert metrics.model_dump(mode="json")["manufacturing_date"] == "2026-10-01"
 
     # 3. SpecialistDossierPayload
-    import datetime
     dossier = SpecialistDossierPayload(
         batch_id="LOTE-2026-DEF",
         factory_code="FAC-SP-01",

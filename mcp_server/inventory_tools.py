@@ -7,7 +7,9 @@ silent customer identification and proactive alert queue management.
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import exists, select, func
+from decimal import Decimal
+
+from sqlalchemy import and_, case, exists, false, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +21,12 @@ from core.database import (
     Order,
     ProactiveAlertEvent,
     Ticket,
+    Unit,
 )
+from core.policy_config import BATCH_FAILURE_RATE_CRITICAL, RULE_BATCH_CRITICAL
+from core.schemas import BatchFailureMetrics
+
+DEFECT_INTENT = "defective_item"
 
 # Template aprovado do alerta proativo (D11): nada de texto livre gerado por LLM.
 RECALL_ALERT_TEMPLATE_ID = "recall_alert_v1"
@@ -35,54 +42,79 @@ def _no_delivered_alert():
 logger = logging.getLogger("mcp.inventory_tools")
 
 
+def _valid_unit_for_batch(batch_id: str):
+    """Ticket com serial que conta no numerador do lote.
+
+    A unidade pertence ao lote e, se o ticket cita um pedido, é a unidade desse
+    pedido. `is_not_distinct_from` trata NULL como valor (em SQL, `x = NULL` é
+    NULL, não false); o `coalesce` garante um booleano de verdade.
+    """
+    return func.coalesce(
+        and_(
+            Unit.batch_id == batch_id,
+            or_(Ticket.order_id.is_(None), Ticket.order_id.is_not_distinct_from(Unit.order_id)),
+        ),
+        false(),
+    )
+
+
 async def calculate_batch_failure_rate(
     batch_id: str,
     session: Optional[AsyncSession] = None,
 ) -> Dict[str, Any]:
-    """Calculate the defective ticket ratio for a given manufacturing batch.
+    """Taxa de falha do lote por UNIDADES distintas (CLAUDE.md 6.2).
 
-    Formula: failure_rate = defective_tickets_count / total_units_produced
-    Critical threshold: >= 0.50 (50%)
+    taxa = seriais distintos com defeito identificados no lote / total produzido.
+    Várias reclamações da mesma unidade contam uma; reclamações sem serial e com
+    serial inconsistente (de outro pedido ou lote) ficam fora do numerador e são
+    devolvidas à parte.
     """
 
     async def _query(s: AsyncSession) -> Dict[str, Any]:
-        # 1. Fetch batch metadata
         batch = await s.get(Batch, batch_id.strip())
         if not batch:
             return {"found": False, "error": f"Batch {batch_id} not found"}
 
-        # 2. Count defective tickets linked to orders of this batch
+        valid = _valid_unit_for_batch(batch.batch_id)
+        # Tickets de defeito ligados ao lote pelo pedido OU pelo serial informado
         stmt = (
-            select(func.count(Ticket.ticket_id))
-            .join(Order, Ticket.order_id == Order.order_id)
-            .where(Order.batch_id == batch_id)
-            .where(Ticket.intent == "defective_item")
+            select(
+                func.count(func.distinct(case((valid, Ticket.serial_number)))),
+                func.count(func.distinct(Ticket.ticket_id)),
+                func.count(func.distinct(case((Ticket.serial_number.is_(None), Ticket.ticket_id)))),
+                func.count(func.distinct(case(
+                    (and_(Ticket.serial_number.is_not(None), ~valid), Ticket.ticket_id)
+                ))),
+            )
+            .select_from(Ticket)
+            .outerjoin(Order, Ticket.order_id == Order.order_id)
+            .outerjoin(Unit, Ticket.serial_number == Unit.serial_number)
+            .where(Ticket.intent == DEFECT_INTENT)
+            .where(or_(Order.batch_id == batch.batch_id, Unit.batch_id == batch.batch_id))
         )
-        result = await s.execute(stmt)
-        defective_count = result.scalar() or 0
+        units, tickets, unidentified, inconsistent = (await s.execute(stmt)).one()
 
-        # 3. Calculate failure rate
-        failure_rate = defective_count / batch.total_units_produced if batch.total_units_produced > 0 else 0.0
-        is_critical = failure_rate >= 0.50
-
-        # 4. Count silent customers (bought from this batch, no defect ticket, no alert sent yet)
-        silent_count = await _count_silent_customers(s, batch_id)
-
-        return {
-            "found": True,
-            "batch_id": batch.batch_id,
-            "product_id": batch.product_id,
-            "product_name": batch.product_name,
-            "factory_code": batch.factory_code,
-            "manufacturing_date": batch.manufacturing_date.isoformat(),
-            "total_units_produced": batch.total_units_produced,
-            "defective_tickets_count": defective_count,
-            "failure_rate": round(failure_rate, 4),
-            "is_critical": is_critical,
-            "is_blocked": batch.is_blocked,
-            "proactive_recall_triggered": batch.proactive_recall_triggered,
-            "silent_customers_count": silent_count,
-        }
+        rate = Decimal(units) / Decimal(batch.total_units_produced)
+        metrics = BatchFailureMetrics(
+            batch_id=batch.batch_id,
+            product_id=batch.product_id,
+            product_name=batch.product_name,
+            factory_code=batch.factory_code,
+            manufacturing_date=batch.manufacturing_date,
+            total_units_produced=batch.total_units_produced,
+            defective_units_count=units,
+            defective_tickets_count=tickets,
+            unidentified_complaints_count=unidentified,
+            inconsistent_serial_complaints_count=inconsistent,
+            failure_rate=round(float(rate), 4),
+            critical_threshold=float(BATCH_FAILURE_RATE_CRITICAL),
+            is_critical=rate >= BATCH_FAILURE_RATE_CRITICAL,  # comparação exata, sem arredondar antes
+            rule_id=RULE_BATCH_CRITICAL,
+            is_blocked=batch.is_blocked,
+            proactive_recall_triggered=batch.proactive_recall_triggered,
+            silent_orders_count=await _count_silent_orders(s, batch.batch_id),
+        )
+        return metrics.model_dump(mode="json")
 
     if session:
         return await _query(session)
@@ -90,38 +122,41 @@ async def calculate_batch_failure_rate(
         return await _query(s)
 
 
-async def _count_silent_customers(s: AsyncSession, batch_id: str) -> int:
-    """Count customers who purchased from the batch but have NOT filed a defect ticket
-    and have NOT received a proactive alert yet.
-    """
-    # Subquery: customer_ids who already have a defective ticket for this batch
-    complaining_subq = (
-        select(Order.customer_id)
-        .join(Ticket, Ticket.order_id == Order.order_id)
-        .where(Order.batch_id == batch_id)
-        .where(Ticket.intent == "defective_item")
-        .distinct()
-        .subquery()
-    )
+def _silent_order_conditions(batch_id: str) -> list:
+    """Pedido do lote elegível ao alerta proativo (elegibilidade POR PEDIDO, 6.2).
 
-    stmt = (
-        select(func.count(Order.order_id.distinct()))
-        .where(Order.batch_id == batch_id)
-        .where(_no_delivered_alert())
-        .where(Order.customer_id.notin_(select(complaining_subq.c.customer_id)))
+    Não há reclamação de defeito referente a ESTE pedido (pelo `order_id` do
+    ticket ou pelo serial de uma unidade dele) e não há alerta `delivered`.
+    Outros pedidos do mesmo cliente não interferem.
+    """
+    # `.correlate(Order)` é essencial: sem ele, a subconsulta aninhada traz o
+    # próprio `orders` no FROM (produto cartesiano) e todo pedido parece reclamado.
+    units_of_order = (
+        select(Unit.serial_number).where(Unit.order_id == Order.order_id).correlate(Order)
     )
-    result = await s.execute(stmt)
-    return result.scalar() or 0
+    complained = (
+        exists()
+        .where(
+            Ticket.intent == DEFECT_INTENT,
+            or_(Ticket.order_id == Order.order_id, Ticket.serial_number.in_(units_of_order)),
+        )
+        .correlate(Order)
+    )
+    return [Order.batch_id == batch_id, ~complained, _no_delivered_alert()]
+
+
+async def _count_silent_orders(s: AsyncSession, batch_id: str) -> int:
+    stmt = select(func.count()).select_from(Order).where(*_silent_order_conditions(batch_id))
+    return (await s.execute(stmt)).scalar_one()
 
 
 async def get_silent_customers(
     batch_id: str,
     session: Optional[AsyncSession] = None,
 ) -> Dict[str, Any]:
-    """Return the list of customers who bought from a batch but have NOT filed
-    a defect complaint and have NOT been proactively alerted yet.
+    """Lista os pedidos do lote elegíveis ao alerta proativo, com o contato do cliente.
 
-    Used by the Predictive Batch Agent to dispatch proactive alerts.
+    Usado pela contenção do lote para enfileirar alertas por template (D11).
     """
 
     async def _query(s: AsyncSession) -> Dict[str, Any]:
@@ -129,46 +164,32 @@ async def get_silent_customers(
         if not batch:
             return {"found": False, "error": f"Batch {batch_id} not found"}
 
-        # Subquery: customers who already complained about defect in this batch
-        complaining_subq = (
-            select(Order.customer_id)
-            .join(Ticket, Ticket.order_id == Order.order_id)
-            .where(Order.batch_id == batch_id)
-            .where(Ticket.intent == "defective_item")
-            .distinct()
-            .subquery()
-        )
-
-        # Orders from this batch where customer hasn't complained and alert not sent
         stmt = (
             select(Order, Customer)
             .join(Customer, Order.customer_id == Customer.customer_id)
-            .where(Order.batch_id == batch_id)
-            .where(_no_delivered_alert())
-            .where(Order.customer_id.notin_(select(complaining_subq.c.customer_id)))
+            .where(*_silent_order_conditions(batch.batch_id))
+            .order_by(Order.order_id)
         )
-        result = await s.execute(stmt)
-        rows = result.all()
-
-        silent_customers = []
-        for order, customer in rows:
-            silent_customers.append({
+        rows = (await s.execute(stmt)).all()
+        silent_orders = [
+            {
+                "order_id": order.order_id,
                 "customer_id": str(customer.customer_id),
                 "customer_name": customer.name,
                 "customer_email": customer.email,
                 "customer_phone": customer.phone,
-                "customer_tier": customer.tier.value if hasattr(customer.tier, "value") else str(customer.tier),
-                "order_id": order.order_id,
+                "customer_tier": customer.tier.value,
                 "order_value": float(order.order_value),
                 "product_id": order.product_id,
-            })
-
+            }
+            for order, customer in rows
+        ]
         return {
             "found": True,
-            "batch_id": batch_id,
+            "batch_id": batch.batch_id,
             "product_name": batch.product_name,
-            "silent_customers_count": len(silent_customers),
-            "silent_customers": silent_customers,
+            "silent_orders_count": len(silent_orders),
+            "silent_orders": silent_orders,
         }
 
     if session:
@@ -290,9 +311,10 @@ async def get_defect_symptoms_sample(
     async def _query(s: AsyncSession) -> List[str]:
         stmt = (
             select(Ticket.message_text)
-            .join(Order, Ticket.order_id == Order.order_id)
-            .where(Order.batch_id == batch_id)
-            .where(Ticket.intent == "defective_item")
+            .outerjoin(Order, Ticket.order_id == Order.order_id)
+            .outerjoin(Unit, Ticket.serial_number == Unit.serial_number)
+            .where(or_(Order.batch_id == batch_id, Unit.batch_id == batch_id))
+            .where(Ticket.intent == DEFECT_INTENT)
             .order_by(Ticket.created_at.desc())
             .limit(limit)
         )

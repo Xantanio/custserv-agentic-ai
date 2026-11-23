@@ -91,11 +91,11 @@ async def lookup_customer_history(customer_id: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool()
 async def check_batch_failure_rate(batch_id: str) -> str:
-    """Calcula a taxa de falha preditiva de um lote de fabricação.
+    """Calcula a taxa de falha de um lote por unidades distintas com defeito.
 
-    Fórmula: tickets_defeito / total_unidades_produzidas
-    Retorna métricas incluindo: failure_rate, is_critical (>= 50%),
-    contagem de clientes silenciosos e status de bloqueio.
+    Fórmula: seriais distintos com defeito no lote / total de unidades produzidas.
+    Retorna também reclamações sem serial e com serial inconsistente (fora da taxa),
+    is_critical (taxa >= limiar da política) e a contagem de pedidos silenciosos.
     """
     result = await calculate_batch_failure_rate(batch_id=batch_id)
     return json.dumps(result, ensure_ascii=False, default=str)
@@ -103,10 +103,10 @@ async def check_batch_failure_rate(batch_id: str) -> str:
 
 @mcp.tool()
 async def find_silent_customers(batch_id: str) -> str:
-    """Lista clientes que compraram de um lote mas NÃO abriram reclamação
-    de defeito e NÃO receberam alerta proativo ainda.
+    """Lista os pedidos do lote sem reclamação de defeito e sem alerta entregue.
 
-    Usado para disparar notificações preventivas quando um lote atinge o limiar crítico.
+    A elegibilidade é por pedido: um cliente que reclamou de um pedido continua
+    elegível pelos outros. Usado para enfileirar alertas preventivos.
     """
     result = await get_silent_customers(batch_id=batch_id)
     return json.dumps(result, ensure_ascii=False, default=str)
