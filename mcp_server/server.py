@@ -15,9 +15,10 @@ Agents act as MCP Clients and consume these tools to:
 import asyncio
 import json
 import logging
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -31,9 +32,34 @@ from mcp_server.inventory_tools import (
     queue_proactive_alerts,
     get_defect_symptoms_sample,
 )
+from mcp_server.investigation_tools import (
+    compare_factory_batches as _compare_factory_batches,
+    complaint_timeline as _complaint_timeline,
+    defect_rate_by as _defect_rate_by,
+    sample_defect_complaints as _sample_defect_complaints,
+    search_symptoms as _search_symptoms,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
 logger = logging.getLogger("mcp_server")
+
+# Anotações MCP: DICAS ao cliente sobre o efeito de cada ferramenta. Não são
+# proteção; o menor privilégio real é a lista fechada de cada agente
+# (ex.: investigation_tools.INVESTIGATOR_TOOLS) mais os testes.
+READ_ONLY = ToolAnnotations(
+    read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+)
+WRITE_IDEMPOTENT = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+)
+WRITE_DESTRUCTIVE = ToolAnnotations(
+    read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+)
+
+
+def _dump(result) -> str:
+    return json.dumps(result, ensure_ascii=False, default=str)
+
 
 # ---------------------------------------------------------------------------
 # MCP Server Instance
@@ -51,7 +77,7 @@ mcp = MCPServer(
 # ---------------------------------------------------------------------------
 # Database Tools
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def lookup_customer(
     customer_id: Optional[str] = None,
     email: Optional[str] = None,
@@ -66,7 +92,7 @@ async def lookup_customer(
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def lookup_order(order_id: str) -> str:
     """Busca detalhes de um pedido pelo ID (ex: 'ORD-10001').
 
@@ -76,7 +102,7 @@ async def lookup_order(order_id: str) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def lookup_customer_history(customer_id: str) -> str:
     """Recupera o histórico completo de um cliente: todos os pedidos e tickets anteriores.
 
@@ -89,7 +115,7 @@ async def lookup_customer_history(customer_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Inventory / Batch Tools
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def check_batch_failure_rate(batch_id: str) -> str:
     """Calcula a taxa de falha de um lote por unidades distintas com defeito.
 
@@ -101,7 +127,7 @@ async def check_batch_failure_rate(batch_id: str) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def find_silent_customers(batch_id: str) -> str:
     """Lista os pedidos do lote sem reclamação de defeito e sem alerta entregue.
 
@@ -112,7 +138,7 @@ async def find_silent_customers(batch_id: str) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE_DESTRUCTIVE)
 async def block_batch(batch_id: str) -> str:
     """Bloqueia um lote no ERP, impedindo novas vendas.
 
@@ -123,7 +149,7 @@ async def block_batch(batch_id: str) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE_IDEMPOTENT)
 async def queue_alerts(batch_id: str, order_ids: List[str]) -> str:
     """Enfileira alertas proativos (status pending) para pedidos do lote.
 
@@ -134,7 +160,7 @@ async def queue_alerts(batch_id: str, order_ids: List[str]) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_batch_defect_symptoms(batch_id: str, limit: int = 5) -> str:
     """Retorna uma amostra das mensagens de reclamação de defeito para um lote.
 
@@ -142,6 +168,55 @@ async def get_batch_defect_symptoms(batch_id: str, limit: int = 5) -> str:
     """
     symptoms = await get_defect_symptoms_sample(batch_id=batch_id, limit=limit)
     return json.dumps({"batch_id": batch_id, "symptoms_sample": symptoms}, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Investigation Tools (somente leitura, agregadas, sem PII; CLAUDE.md 8.2)
+# ---------------------------------------------------------------------------
+@mcp.tool(annotations=READ_ONLY)
+async def defect_rate_by(
+    batch_id: str,
+    dimension: Literal["production_line", "manufacturing_day", "carrier", "purchase_week"],
+) -> str:
+    """Taxa de defeito do lote por grupo de uma dimensão (linha de produção, dia de
+    fabricação, transportadora ou semana de compra).
+
+    Cada grupo traz unidades, unidades defeituosas e defect_rate (já normalizada).
+    Use para achar onde os defeitos se concentram. Compare taxas, não contagens.
+    """
+    return _dump(await _defect_rate_by(batch_id=batch_id, dimension=dimension))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def compare_factory_batches(batch_id: str) -> str:
+    """Compara o lote com os outros lotes da mesma fábrica: taxa de defeito geral e
+    por linha de produção, em ordem de fabricação. Use para saber se o problema é novo.
+    """
+    return _dump(await _compare_factory_batches(batch_id=batch_id))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def complaint_timeline(batch_id: str) -> str:
+    """Reclamações de defeito do lote por semana e quantas unidades foram reclamadas
+    pela primeira vez em cada semana. Use para saber quando o problema começou.
+    """
+    return _dump(await _complaint_timeline(batch_id=batch_id))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def search_symptoms(batch_id: str, term: str) -> str:
+    """Conta reclamações e unidades do lote cujo texto cita um termo (ex.: 'estufada',
+    'tela', 'pulseira'), por linha de produção, com até 3 exemplos mascarados.
+    """
+    return _dump(await _search_symptoms(batch_id=batch_id, term=term))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def sample_defect_complaints(batch_id: str, limit: int = 5) -> str:
+    """Amostra das reclamações de defeito mais recentes do lote (máx. 8), com data,
+    canal, linha de produção e texto mascarado. Use para conhecer os sintomas.
+    """
+    return _dump(await _sample_defect_complaints(batch_id=batch_id, limit=limit))
 
 
 # ---------------------------------------------------------------------------
