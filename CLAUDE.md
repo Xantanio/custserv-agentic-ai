@@ -68,8 +68,9 @@ omniops-ai/
 ├── classifiers/                   [novo]  modelo de classificação, não agente
 │   ├── triage.py                        interface TriageClassifier, TriageResult e implementações
 │   └── translation.py                   interface Translator e TranslatingClassifier (decorator)
-├── llm/                           [novo]
-│   └── factory.py                       get_chat_model(...)
+├── llm/                           [ok]
+│   ├── factory.py                       get_chat_model(settings, role), resolve_llm_spec -> LLMSpec
+│   └── testing.py                       ScriptedChatModel (falso com bind_tools) para testes
 ├── mcp_server/                    [ok]
 │   ├── server.py, database_tools.py, inventory_tools.py
 │   └── investigation_tools.py     [novo]  ferramentas de leitura/agregação para o investigador
@@ -108,6 +109,7 @@ omniops-ai/
 | D19 | **Ollama em um PC Windows dedicado (RTX 4 GB VRAM, 8 GB RAM), acessado por VPN a partir do notebook de desenvolvimento, ou usado localmente quando o código roda no próprio Windows; modelo inicial `qwen3:4b`**; `qwen3:8b` como referência com offload parcial; API externa só para comparação | Hardware restrito: modelos pequenos erram de forma instrutiva e exigem controles (orçamentos, validação, retentativas, evals). A arquitetura modular permite comparar com modelo maior sem mudar o código. |
 | D20 | **Modelo padrão `qwen3:4b-instruct` e `LLM_NUM_CTX=4096`**; `qwen3:4b` (variante *Thinking-2507*) fica só como comparação na Etapa 6 | Medido em 2026-11-23 (Ollama 0.40.17, RTX 3050 Laptop): VRAM útil ~3,2 GB (o Windows usa ~730 MB). A tag `qwen3:4b` é *thinking-only*: ignora `think:false` e `/no_think` e gerou 600–1000 tokens para uma frase (86–275 s). O instruct gerou ~40 tokens em 5,2 s com o modelo carregado. Com `num_ctx` 8192 o modelo vai 45% para a CPU; com 4096, 34%; ~8,6 tok/s nos dois casos. Temperatura 0 **não** garantiu saída idêntica entre execuções: as evals devem repetir cada caso |
 | D21 | **Cenário sintético da Etapa 1:** lote DEF com 50 unidades em `L1` e 50 em `L2`; 49 defeitos históricos (45 `L2` ≈ 92%); a unidade de Mariana (`ORD-20050`) reservada na `L2`; 1 unidade reclamada 2× e 1 reclamação sem serial (51 tickets, 49 unidades); 30 compradores silenciosos (`ORD-20054..20083`); `ORD-20052` com 2 unidades; `LOTE-2026-SEP` (mesma fábrica, ~2%) para comparação; coluna `orders.carrier`; **distratores de taxa-base** (RotaSul ≈ 50% do volume; semana de promoção); "bateria estufada" com `is_health_risk=True` (risco de incêndio) | Torna o investigador avaliável (causa conhecida) e exige raciocínio com taxa-base, não contagem bruta. Gerado com `SEED=42` e `uuid5`; `test_generator_is_deterministic` garante que os CSVs versionados batem com o gerador |
+| D23 | **Fábrica de LLM em duas fases** (`resolve_llm_spec` pura → `LLMSpec` com `model_version` para auditoria; `get_chat_model` constrói). Provedores `ollama` (nativo, `langchain-ollama`) e `openai_compatible` (extra opcional `.[openai]`, import tardio). **Sobrescrita por papel** via `LLM_ROLES__<PAPEL>__<CAMPO>` (papel inválido falha na inicialização; `env_ignore_empty=True`). **Agentes recebem o modelo por injeção**; testes usam `llm.testing.ScriptedChatModel` (roteiro de `AIMessage`, implementa `bind_tools` e registra chamadas/ferramentas). Smoke test opt-in: `pytest -m ollama -s` | Os falsos do LangChain não implementam `bind_tools`. Medido em 2026-11-23: `qwen3:4b-instruct` acertou ferramenta e argumento nos dois caminhos (nativo 5,9 s, `/v1` 5,5 s, modelo carregado); com `qwen3:4b` (thinking) a mesma chamada levou 35 s. No caminho `/v1` **não há `num_ctx`**: o Ollama usa o padrão do servidor (`OLLAMA_CONTEXT_LENGTH`) |
 | D22 | **Ticket com serial válido do lote e sem pedido informado conta no numerador**; serial que não corresponde ao pedido citado (outro lote, outro pedido ou unidade em estoque) não conta em lote nenhum e vai para HITL | O serial identifica a unidade física; subcontar atrasaria a contenção de um risco de segurança (bateria estufada). A posse da unidade é verificada depois, no HITL. Inconsistência nunca infla nenhum lote |
 
 ## 6. Modelo de dados e fórmulas
@@ -261,11 +263,11 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 ## 9. Estado atual do código (auditoria de 2026-11-23)
 
-**Existe:** `core/{config,database,schemas,policy_config}.py` · `mcp_server/{server,database_tools,inventory_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules}.py` · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
+**Existe:** `core/{config,database,schemas,policy_config}.py` · `llm/{factory,testing}.py` · `mcp_server/{server,database_tools,inventory_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules,test_llm_factory}.py` · `tests/smoke/test_ollama_smoke.py` (opt-in, `-m ollama`) · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
 
 **Testes de integração** (`@pytest.mark.integration`): usam o banco `<POSTGRES_DB>_test` (criado automaticamente, esquema recriado a cada execução, rollback por teste); são pulados se o Postgres não responder. Nunca tocam o banco de desenvolvimento.
 
-**Não existe:** `api/*` · `agents/*` · `classifiers/*` · `llm/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py` · testes da lógica do MCP.
+**Não existe:** `api/*` · `agents/*` · `classifiers/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py`.
 
 **Divergências a corrigir, em ordem:**
 
@@ -287,7 +289,7 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, e propos
 | 0 ✅ | Preparação: `mcp>=2,<3`, MCP via HTTP + healthcheck, variáveis `LLM_*` no `.env.example`/`config.py`, preparar o PC Windows como servidor de Ollama (seção 12), baixar `qwen3:4b` e validar a conexão a partir do notebook com `curl` pela VPN. O código no notebook usa `LLM_BASE_URL` apontando para o PC (modo A) | Transportes MCP; pinagem de dependências; configuração por ambiente |
 | 1 ✅ | Modelo de dados: `units`, `tickets.serial_number`, `proactive_alert_events`, `audit_events`; CSVs e seed com **causa `L2` plantada**, gerados com semente fixa e IDs determinísticos (`uuid5`) para reprodutibilidade entre máquinas | Modelar estado com efeitos externos; idempotência; criar dados que tornam um agente avaliável |
 | 2 ✅ | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
-| 3 | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
+| 3 ✅ | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
 | 4 | `mcp_server/investigation_tools.py` com testes | Desenho de ferramentas para LLM: pequenas, tipadas, agregadas, seguras |
 | 5 | **Agente investigador v1** (subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
 | 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada, métricas, ajuste de prompt, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |

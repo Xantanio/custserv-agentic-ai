@@ -22,6 +22,7 @@ dependencies = [
     "langgraph>=0.0.30",
     "langchain>=0.1.13",
     "langchain-core>=0.1.33",
+    "langchain-ollama>=1.2,<2",
     "mcp>=2,<3",
     "httpx>=0.27.0",
     "streamlit>=1.32.0",
@@ -29,6 +30,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Provedor LLM_PROVIDER=openai_compatible (API externa ou Ollama em /v1)
+openai = [
+    "langchain-openai>=1.8,<2",
+]
 dev = [
     "pytest>=8.1.0",
     "pytest-asyncio>=0.23.5",
@@ -37,7 +42,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "api*", "agents*", "mcp_server*", "ui*"]
+include = ["core*", "api*", "agents*", "mcp_server*", "ui*", "llm*"]
 exclude = ["data*", "tests*", "docs*", "scripts*"]
 
 [tool.pytest.ini_options]
@@ -45,6 +50,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
+# Testes contra o Ollama real são opt-in: pytest -m ollama
+addopts = "-m 'not ollama'"
 markers = [
+    "ollama: smoke test contra o Ollama real (lento; rode com -m ollama)",
     "integration: exige Postgres acessível (banco <POSTGRES_DB>_test); pulado se indisponível",
 ]

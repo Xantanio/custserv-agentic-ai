@@ -1,7 +1,27 @@
 from typing import Literal, Optional
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LLMProvider = Literal["ollama", "openai_compatible"]
+# Papéis de LLM do projeto (D14, D16). Papel desconhecido no .env falha na inicialização.
+LLMRoleName = Literal["investigator", "generalist", "judge", "translator"]
+
+
+class LLMRoleOverride(BaseModel):
+    """Sobrescrita opcional por papel; campo ausente herda o valor global `LLM_*`.
+
+    Ex.: `LLM_ROLES__INVESTIGATOR__MODEL=qwen3:8b`, `LLM_ROLES__JUDGE__REASONING=true`.
+    """
+
+    provider: Optional[LLMProvider] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[SecretStr] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    num_ctx: Optional[int] = Field(default=None, gt=0)
+    reasoning: Optional[bool] = None
+    timeout_seconds: Optional[float] = Field(default=None, gt=0)
 
 
 class Settings(BaseSettings):
@@ -9,6 +29,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        env_nested_delimiter="__",
+        env_ignore_empty=True,  # LLM_REASONING= ou LLM_API_KEY= vazios contam como não definidos
     )
 
     ENVIRONMENT: str = Field(default="development", description="Execution environment")
@@ -46,7 +68,7 @@ class Settings(BaseSettings):
     # LLM (D13/D19): provedor trocável por configuração.
     # Modo A (código no notebook): LLM_BASE_URL=http://<ip-da-vpn-do-pc>:11434
     # Modo B (código no PC Windows): LLM_BASE_URL=http://localhost:11434
-    LLM_PROVIDER: Literal["ollama", "openai_compatible"] = Field(
+    LLM_PROVIDER: LLMProvider = Field(
         default="ollama",
         description="Provedor do chat model; a fábrica em llm/factory.py escolhe a implementação",
     )
@@ -60,6 +82,13 @@ class Settings(BaseSettings):
         default=4096, gt=0, description="Janela de contexto do Ollama; consome VRAM (ver D20)"
     )
     LLM_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0)
+    LLM_REASONING: Optional[bool] = Field(
+        default=None,
+        description="Modo de raciocínio (thinking). None = padrão do modelo; false = desligado",
+    )
+    LLM_ROLES: dict[LLMRoleName, LLMRoleOverride] = Field(
+        default_factory=dict, description="Sobrescritas por papel (LLM_ROLES__<PAPEL>__<CAMPO>)"
+    )
 
     def get_database_url(self) -> str:
         if self.DATABASE_URL:
