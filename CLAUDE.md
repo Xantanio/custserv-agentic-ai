@@ -297,10 +297,11 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 6. **`pyproject.toml`:** ~~`mcp>=2,<3`~~ feito (instalado 2.3.0). Pendente: incluir `classifiers*` e `llm*` no `include` quando existirem; adicionar dependências das etapas conforme chegarem.
 7. ~~`.env.example` e `core/config.py`~~ **resolvido na Etapa 0:** `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (`SecretStr`), `LLM_TEMPERATURE`, `LLM_NUM_CTX`, `LLM_TIMEOUT_SECONDS`; `LLM_DOCKER_BASE_URL` (URL vista de dentro dos containers; `host.docker.internal` com `extra_hosts: host-gateway`). Variáveis `OPENAI_*` removidas. Se o Jev for usado, adicionar `TYPESAFE_API_KEY` e `TYPESAFE_DEFAULT_MODEL`.
 8. Menores: ~~datas sem fuso no seed~~ (resolvido na Etapa 1: CSVs em ISO 8601 UTC, `fromisoformat`); `get_customer` normaliza e-mail e não telefone (normalizar para E.164). `.gitignore` cobre `.env`, `__pycache__/` e `.venv/` (ok); `.gitattributes` criado (Etapa 0). **Não leia nem comite o `.env` real.**
+9. **Testes de integração lentos sem Postgres:** com o banco fora do ar, os testes são pulados corretamente, mas cada um espera o tempo limite de conexão (suíte de ~20 s passou a 132 s em 2026-11-24). Detectar a indisponibilidade uma vez por execução no `conftest.py` e pular os demais na hora.
 
 ## 10. Roteiro por etapas (investigador primeiro — D17)
 
-Cada etapa termina com testes passando, esta seção e a 9 atualizadas, e proposta de commit.
+Cada etapa termina com testes passando, esta seção e a 9 atualizadas, a **tabela de status, o roteiro e a estrutura do `README.md` atualizados** (o README é a vitrine: só promete o que roda), e proposta de commit.
 
 | Etapa | Entrega | Conceito a explicar |
 |---|---|---|
