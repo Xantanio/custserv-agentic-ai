@@ -56,15 +56,16 @@ omniops-ai/
 │   ├── main.py                          FastAPI e ciclo de vida
 │   ├── routes/{webhooks,slack_callback}.py
 │   └── adapters/omnichannel.py          payload externo -> StandardTicket
-├── agents/                        [novo]
-│   ├── state.py                         AgentState tipado (LangGraph)
-│   ├── graph.py                         orquestrador (StateGraph)
-│   ├── decision_engine.py               política determinística (PolicyDecision)
-│   ├── quality_agent.py                 detecção e contenção do lote (workflow determinístico)
-│   ├── investigator_agent.py            agente de LLM autônomo, somente leitura
-│   ├── generalist_agent.py              agente ReAct de contatos simples
-│   ├── judge_agent.py                   juiz da resposta antes do envio
-│   └── liaison_agent.py                 adaptador A2A (Slack/Teams), não é agente de raciocínio
+├── agents/                        [novo]  SÓ agentes de LLM: decidem o próprio caminho, em laço (D25)
+│   ├── investigator.py                  investigador de causa raiz, autônomo e somente leitura (Etapa 5)
+│   └── generalist.py                    atendente ReAct de contatos simples (Etapa 9)
+├── workflows/                     [novo]  caminho definido no código (LangGraph ou funções)
+│   ├── state.py                         estado tipado do grafo
+│   ├── graph.py                         orquestrador (StateGraph, roteamento determinístico)
+│   ├── batch_containment.py             detecção e contenção do lote (determinístico)
+│   └── response_judge.py                juiz da resposta: passo avaliador (LLM-as-judge), sem laço
+├── integrations/                  [novo]  adaptadores para sistemas externos
+│   └── specialist_liaison.py            A2A com Slack/Teams: publica dossiê e recebe a resposta
 ├── classifiers/                   [novo]  modelo de classificação, não agente
 │   ├── triage.py                        interface TriageClassifier, TriageResult e implementações
 │   └── translation.py                   interface Translator e TranslatingClassifier (decorator)
@@ -76,7 +77,8 @@ omniops-ai/
 │   └── investigation_tools.py     [ok]    ferramentas de leitura/agregação + INVESTIGATOR_TOOLS
 ├── core/                          [ok]
 │   ├── config.py, database.py, schemas.py, privacy.py (mask_pii)
-│   └── policy_config.py           [ok]    limiares (lote: Etapa 2) · [novo] palavras-chave (Etapa 7)
+│   ├── policy_config.py           [ok]    limiares (lote: Etapa 2) · [novo] palavras-chave (Etapa 7)
+│   └── decision_engine.py         [novo]  política determinística (PolicyDecision; Etapa 7)
 ├── data/                          [ok]  customers.csv, batches.csv, orders.csv, historic_tickets.csv · [novo] units.csv
 ├── scripts/                       [ok]  generate_synthetic_data.py, seed_db.py · [novo] simulate_traffic.py, run_investigation.py
 ├── ui/app.py                      [novo]  Streamlit
@@ -95,13 +97,13 @@ omniops-ai/
 | D5 | **Determinístico antes do LLM** | Regras testáveis sem modelo; o LLM entra depois como componente plugado num sistema que já funciona. |
 | D6 | **"Unidade" afetada = número de série**, em tabela `units` própria | A taxa conta unidades físicas distintas; um pedido pode ter várias unidades. |
 | D7 | **Guardrails em camadas, fail-closed, incerteza como gatilho de HITL** | Erros de modelo são esperados; o desenho deve contê-los (seção 7). |
-| D8 | **Componentes:** classificador (modelo, não agente), detecção de lote (workflow), investigador, generalista, juiz (agentes de LLM) e orquestrador (workflow) | Responsabilidades distintas; ver seção 8. |
+| D8 | **Componentes:** classificador (modelo, não agente), detecção e contenção de lote (workflow), investigador e generalista (agentes de LLM), juiz (passo avaliador com LLM; D25), orquestrador (workflow), `decision_engine` (regras) e liaison (adaptador) | Responsabilidades distintas; ver seções 8 e 8.6. |
 | D9 | **Classificação atrás da interface `TriageClassifier`** | Trocar de modelo sem reescrever o sistema. |
 | D10 | **Serial:** `SN-<SIGLA>-<6 dígitos>` (ex.: `SN-SW-000123`; regex `SN-[A-Z]{2,4}-\d{6}`), extraído por regex | Classificador escolhe rótulos, não extrai trechos; regex é determinística e testável. |
 | D11 | **Alerta proativo de recall usa template aprovado**, sem geração livre | Comunicação de risco ao consumidor não pode ser improvisada. |
 | D12 | **Classificação: caminho gratuito e didático.** Regras lexicais + `FakeTriageClassifier` → zero-shot NLI como ponte → classificador treinado localmente; **Jev (pago, TypeSafe) vira adaptador opcional** | Custo zero e ensina o ciclo de ML (dados, treino, avaliação, calibração). |
 | D13 | **LLM local com Ollama, arquitetura modular** para trocar por API externa por configuração | Ver seção 3. |
-| D14 | **Três agentes de LLM, nesta ordem de implementação:** investigador → generalista ReAct → juiz da resposta | Cada um é uma fatia que se implementa, mede e melhora. |
+| D14 | **Três componentes de LLM, nesta ordem de implementação:** investigador (agente) → generalista ReAct (agente) → juiz da resposta (passo avaliador; D25) | Cada um é uma fatia que se implementa, mede e melhora. |
 | D15 | **O especialista de lotes é dividido:** detecção e contenção determinísticas (workflow) + **investigador autônomo somente leitura** | Quem age (bloqueia, avisa) é código previsível; quem investiga é o LLM. |
 | D16 | **Tradução para inglês é uma estratégia opcional e avaliada por dados** (decorator sobre um classificador em inglês) | Permite usar modelos só em inglês; adotada apenas se superar o multilíngue no conjunto dourado. Ver 8.1. |
 | D17 | **Ordem: o agente investigador primeiro**, como fatia vertical | Mostra um agente autônomo funcionando e avaliável cedo; o orquestrador completo vem depois. |
@@ -111,6 +113,7 @@ omniops-ai/
 | D21 | **Cenário sintético da Etapa 1:** lote DEF com 50 unidades em `L1` e 50 em `L2`; 49 defeitos históricos (45 `L2` ≈ 92%); a unidade de Mariana (`ORD-20050`) reservada na `L2`; 1 unidade reclamada 2× e 1 reclamação sem serial (51 tickets, 49 unidades); 30 compradores silenciosos (`ORD-20054..20083`); `ORD-20052` com 2 unidades; `LOTE-2026-SEP` (mesma fábrica, ~2%) para comparação; coluna `orders.carrier`; **distratores de taxa-base** (RotaSul ≈ 50% do volume; semana de promoção); "bateria estufada" com `is_health_risk=True` (risco de incêndio) | Torna o investigador avaliável (causa conhecida) e exige raciocínio com taxa-base, não contagem bruta. Gerado com `SEED=42` e `uuid5`; `test_generator_is_deterministic` garante que os CSVs versionados batem com o gerador |
 | D23 | **Fábrica de LLM em duas fases** (`resolve_llm_spec` pura → `LLMSpec` com `model_version` para auditoria; `get_chat_model` constrói). Provedores `ollama` (nativo, `langchain-ollama`) e `openai_compatible` (extra opcional `.[openai]`, import tardio). **Sobrescrita por papel** via `LLM_ROLES__<PAPEL>__<CAMPO>` (papel inválido falha na inicialização; `env_ignore_empty=True`). **Agentes recebem o modelo por injeção**; testes usam `llm.testing.ScriptedChatModel` (roteiro de `AIMessage`, implementa `bind_tools` e registra chamadas/ferramentas). Smoke test opt-in: `pytest -m ollama -s` | Os falsos do LangChain não implementam `bind_tools`. Medido em 2026-11-23: `qwen3:4b-instruct` acertou ferramenta e argumento nos dois caminhos (nativo 5,9 s, `/v1` 5,5 s, modelo carregado); com `qwen3:4b` (thinking) a mesma chamada levou 35 s. No caminho `/v1` **não há `num_ctx`**: o Ollama usa o padrão do servidor (`OLLAMA_CONTEXT_LENGTH`) |
 | D24 | **Ferramentas do investigador:** lista fechada `INVESTIGATOR_TOOLS` (6): `check_batch_failure_rate`, `defect_rate_by(batch_id, dimension)` (uma ferramenta com `dimension` enumerada em vez de quatro), `compare_factory_batches`, `complaint_timeline`, `search_symptoms`, `sample_defect_complaints` (máx. 8). Devolvem **taxas já normalizadas** pela base do grupo (produzidas para linha/dia; vendidas para transportadora/semana), texto livre via `mask_pii`, orçamento de **≤ 1.500 caracteres por resposta** (testado) e erros com as opções válidas. Todas as ferramentas MCP têm `ToolAnnotations` (dica ao cliente, não proteção). `get_batch_defect_symptoms` (texto sem máscara, para o dossiê humano) e `find_silent_customers` (contatos) **ficam fora** | Para modelos pequenos, poucas ferramentas e respostas curtas importam mais que o prompt; cálculo é determinístico (princípio 1). Achado: nos dados, as taxas por transportadora variam por **ruído de amostra pequena** (ExpressoNorte 0,70 com 20 unidades × RotaSul 0,52 com 42), o que vira um distrator realista, muito mais fraco que L2 0,90 × L1 0,08. O servidor MCP também valida o `enum` e devolve as opções ao modelo |
+| D25 | **Nomes e pastas pela natureza da peça** (seção 8.6): `agents/` só contém agentes de LLM (`investigator.py`, `generalist.py`); `workflows/` tem `state.py`, `graph.py`, `batch_containment.py` (ex-`quality_agent`) e `response_judge.py` (ex-`judge_agent`); `integrations/specialist_liaison.py` (ex-`liaison_agent`); `core/decision_engine.py`. Sem sufixo `_agent` em arquivos. **Pendência da Etapa 10:** se o juiz ganhar ferramentas para verificar fatos por conta própria (laço), ele passa a ser agente e muda para `agents/` | Decidido em 2026-11-24, antes de qualquer arquivo existir (custo zero). Chamar workflow, adaptador ou regra de "agente" esconde a arquitetura e soa como exagero em entrevista. Descartados: manter `agents/` e só renomear arquivos (a pasta continuaria imprecisa); pasta genérica `components/` (perde a informação); `policy/` para um arquivo só |
 | D22 | **Ticket com serial válido do lote e sem pedido informado conta no numerador**; serial que não corresponde ao pedido citado (outro lote, outro pedido ou unidade em estoque) não conta em lote nenhum e vai para HITL | O serial identifica a unidade física; subcontar atrasaria a contenção de um risco de segurança (bateria estufada). A posse da unidade é verificada depois, no HITL. Inconsistência nunca infla nenhum lote |
 
 ## 6. Modelo de dados e fórmulas
@@ -162,11 +165,13 @@ W_canal:       reclame_aqui +25 · whatsapp +10 · email +5
         -> [decision_engine: PolicyDecision AUTO | HITL | HARD_STOP]
               |-- saúde ........ HARD_STOP: texto padrão prudente + equipe de Qualidade/Médica/Jurídica
               |-- ameaça judicial  HITL prioritário: acuse neutro + atendimento humano
-              |-- defective_item . [quality_agent: taxa do lote (workflow)]
-              |        taxa >= 0.50: bloqueio + alertas por template + dossiê ao especialista (A2A)
-              |                      + [investigator_agent] (somente leitura) anexa hipóteses ao dossiê
-              |-- demais ........ [generalist_agent (ReAct, ferramentas de leitura)]
-                                        -> [judge_agent] -> envio (se o juiz e a política aprovarem)
+              |-- defective_item . [batch_containment (workflow): taxa do lote]
+              |        taxa >= 0.50: bloqueio + alertas por template + dossiê ao especialista
+              |                      (specialist_liaison, A2A)
+              |                      + [investigator (AGENTE, somente leitura)] anexa hipóteses ao dossiê
+              |-- demais ........ [generalist (AGENTE ReAct, ferramentas de leitura)]
+                                        -> [response_judge (passo avaliador)] -> envio
+                                           (se o juiz e a política aprovarem)
         HITL: o grafo pausa por thread_id e retoma quando o especialista responde (webhook).
 ```
 
@@ -246,21 +251,33 @@ Agente de LLM **autônomo e somente leitura**, acionado quando a taxa do lote at
 
 Atende rastreio, dúvidas de entrega e faz o atendimento inicial (acuse, perguntas de esclarecimento). Agente ReAct com **ferramentas MCP de leitura** (`lookup_order`, `lookup_customer`, histórico). É o único que redige texto livre ao cliente, e só dentro do que a política autorizou. Nunca recebe ferramentas de escrita.
 
-### 8.4 Juiz da resposta — D14
+### 8.4 Juiz da resposta — D14, D25
 
-Agente revisor (LLM-as-judge) que confere o rascunho do generalista **antes do envio**: aderência à política, ausência de promessa não autorizada, ausência de admissão de culpa, coerência com os dados consultados, tom. Devolve veredito estruturado (`aprovar` | `reescrever` | `escalar`). Não substitui a política: o `decision_engine` continua tendo a palavra final. Avaliar o próprio juiz com casos conhecidos (respostas boas e ruins).
+Passo avaliador do workflow (`workflows/response_judge.py`; LLM-as-judge, padrão *avaliador-otimizador*), sem laço nem ferramentas, que confere o rascunho do generalista **antes do envio**: aderência à política, ausência de promessa não autorizada, ausência de admissão de culpa, coerência com os dados consultados, tom. Devolve veredito estruturado (`aprovar` | `reescrever` | `escalar`). Não substitui a política: o `decision_engine` continua tendo a palavra final. Avaliar o próprio juiz com casos conhecidos (respostas boas e ruins). Se na Etapa 10 ele receber ferramentas para conferir fatos por conta própria, vira agente e muda para `agents/` (D25).
 
 ### 8.5 Orquestrador, política e enlace
 
-- **Orquestrador** (`agents/graph.py`): `StateGraph` com **roteamento determinístico** (não um LLM supervisor), checkpoint por `thread_id`, pausa para HITL e retomada.
-- **`decision_engine.py`**: política determinística; não é agente.
-- **`quality_agent.py`**: detecção e contenção do lote (workflow determinístico com ferramentas MCP).
-- **`liaison_agent.py`**: adaptador A2A com Slack/Teams. Publica o **dossiê técnico** (canal de origem, sintomas, `batch_id`, `factory_code`, `manufacturing_date`, `product_id`, volume produzido vs. taxa, contenção já executada e contagem de clientes silenciosos alertados, hipóteses do investigador) e botões de retorno (ex.: "Registrar causa raiz e confirmar recall do lote X"). O webhook de resposta valida o token, registra o diagnóstico e retoma o grafo (`graph.ainvoke(None, config={"configurable": {"thread_id": ...}})`).
+- **Orquestrador** (`workflows/graph.py`, estado em `workflows/state.py`): `StateGraph` com **roteamento determinístico** (não um LLM supervisor), checkpoint por `thread_id`, pausa para HITL e retomada.
+- **`core/decision_engine.py`**: política determinística; não é agente.
+- **`workflows/batch_containment.py`**: detecção e contenção do lote (workflow determinístico com ferramentas MCP).
+- **`integrations/specialist_liaison.py`**: adaptador A2A com Slack/Teams (não raciocina). Publica o **dossiê técnico** (canal de origem, sintomas, `batch_id`, `factory_code`, `manufacturing_date`, `product_id`, volume produzido vs. taxa, contenção já executada e contagem de clientes silenciosos alertados, hipóteses do investigador) e botões de retorno (ex.: "Registrar causa raiz e confirmar recall do lote X"). O webhook de resposta valida o token, registra o diagnóstico e retoma o grafo (`graph.ainvoke(None, config={"configurable": {"thread_id": ...}})`).
 - **Ingestão omnichannel** (`api/adapters/omnichannel.py`): WhatsApp (estilo Evolution API/Meta Cloud API: `data.key.remoteJid`, `data.message.conversation`), e-mail (estilo SendGrid Inbound Parse: `from`, `subject`, `text`), Reclame Aqui (`consumer_username`, `title`, `complaint_body`) → `StandardTicket`.
 
 ### 8.6 Modelo, workflow ou agente? (nota didática)
 
-Distinção do texto "Building effective agents" (Anthropic): *modelo de classificação* (entrada → rótulos, sem ferramentas nem laço); *workflow* (caminho definido em código, o LLM pode ser um passo); *agente* (o LLM decide dinamicamente ferramentas e ordem, em laço). Neste projeto: classificador = modelo; orquestrador e detecção de lote = workflow; **investigador, generalista e juiz = agentes de LLM**. Descrever cada peça pelo que ela é, no README e em entrevistas.
+Distinção do texto "Building effective agents" (Anthropic): *modelo de classificação* (entrada → rótulos, sem ferramentas nem laço); *workflow* (caminho definido em código, o LLM pode ser um passo); *agente* (o LLM decide dinamicamente ferramentas e ordem, em laço). Descrever cada peça pelo que ela é, no README e em entrevistas. A estrutura de pastas segue esta tabela (D25):
+
+| Peça | Natureza | Laço e escolha do próximo passo? | Onde |
+|---|---|---|---|
+| Classificador de triagem | modelo de ML (entrada → rótulos) | não | `classifiers/` |
+| `decision_engine` | regras determinísticas | não | `core/` |
+| Contenção de lote, orquestrador | workflow | não (caminho fixo no código) | `workflows/` |
+| Juiz da resposta | passo avaliador com LLM | não (uma chamada, sem ferramentas) | `workflows/` |
+| Liaison (Slack/Teams) | adaptador de integração | não | `integrations/` |
+| **Investigador** | **agente de LLM** | **sim** (objetivo → escolhe ferramentas e quando parar) | `agents/` |
+| **Generalista** | **agente de LLM** (ReAct) | **sim** | `agents/` |
+
+**Agência é um espectro.** Pelas propriedades clássicas (Wooldridge & Jennings: autonomia, reatividade, proatividade, habilidade social), o investigador é agente com **autonomia deliberadamente limitada** (só leitura, ≤ 6 ferramentas, ≤ 8 passos; princípio 2), reage a cada resultado de ferramenta e persegue o objetivo, mas **não se ativa sozinho** (o workflow o dispara) e **adapta-se só dentro de uma execução** (sem memória entre execuções; a melhora entre versões é feita pelos engenheiros via evals, Etapa 6). O **sistema** resolve tarefas simples de ponta a ponta combinando peças estreitas: classificador percebe → política decide → generalista age → juiz e política verificam. O classificador nunca fala com o cliente.
 
 ## 9. Estado atual do código (auditoria de 2026-11-23)
 
@@ -268,7 +285,7 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 **Testes de integração** (`@pytest.mark.integration`): usam o banco `<POSTGRES_DB>_test` (criado automaticamente, esquema recriado a cada execução, rollback por teste); são pulados se o Postgres não responder. Nunca tocam o banco de desenvolvimento.
 
-**Não existe:** `api/*` · `agents/*` · `classifiers/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py`.
+**Não existe:** `api/*` · `agents/*` · `workflows/*` · `integrations/*` · `core/decision_engine.py` · `classifiers/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py`.
 
 **Divergências a corrigir, em ordem:**
 
@@ -292,19 +309,19 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, e propos
 | 2 ✅ | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
 | 3 ✅ | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
 | 4 ✅ | `mcp_server/investigation_tools.py` com testes | Desenho de ferramentas para LLM: pequenas, tipadas, agregadas, seguras |
-| 5 | **Agente investigador v1** (subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
+| 5 | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
 | 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada, métricas, ajuste de prompt, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |
-| 7 | `core/policy_config.py`, `decision_engine.py` e classificador: `Fake` + lexical → NLI → treinado; tradução opcional; conjunto dourado e calibração | Camada determinística vs. modelo; fail-closed; ciclo de ML; avaliação por campo |
-| 8 | Orquestrador (`graph.py`, `state.py`), detecção de lote integrada, HITL, `liaison_agent`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, A2A |
-| 9 | Generalista ReAct, com avaliação | Agente voltado ao cliente com menor privilégio |
-| 10 | Juiz da resposta, com avaliação do próprio juiz | LLM-as-judge e seus vieses |
+| 7 | `core/policy_config.py`, `core/decision_engine.py` e classificador: `Fake` + lexical → NLI → treinado; tradução opcional; conjunto dourado e calibração | Camada determinística vs. modelo; fail-closed; ciclo de ML; avaliação por campo |
+| 8 | Orquestrador (`workflows/graph.py`, `workflows/state.py`), contenção de lote integrada (`workflows/batch_containment.py`), HITL, `integrations/specialist_liaison.py`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, A2A |
+| 9 | Generalista ReAct (`agents/generalist.py`), com avaliação | Agente voltado ao cliente com menor privilégio |
+| 10 | Juiz da resposta (`workflows/response_judge.py`), com avaliação do próprio juiz; decidir se ganha ferramentas (vira agente, D25) | LLM-as-judge e seus vieses |
 | 11 | `api/*`, mocks JSON, `simulate_traffic.py`, `test_flows.py`, `ui/app.py` | Normalização omnichannel; demo de portfólio |
 | 12 | Alembic e endurecimento (observabilidade, limites, kill switch) | Migrações de esquema; operação |
 
 ## 11. Convenções
 
 - Pydantic v2 apenas: `model_dump()`, `model_validate()`; nada de `.dict()` / `.parse_obj()` (skill `pydantic-contract-validator`).
-- Contratos compartilhados em `core/schemas.py`; estado do grafo em `agents/state.py`.
+- Contratos compartilhados em `core/schemas.py`; estado do grafo em `workflows/state.py`. Arquivos sem sufixo `_agent`; a pasta diz a natureza da peça (D25).
 - Tudo assíncrono (SQLAlchemy async + asyncpg). Ferramentas MCP aceitam `session` opcional para facilitar testes.
 - Provedores (LLM, classificador, tradutor) sempre atrás de interface e configuração (princípio 8).
 - Commits em Conventional Commits: `<tipo>(<escopo>): <descrição no imperativo>` (skill `git-commit-formatter`).

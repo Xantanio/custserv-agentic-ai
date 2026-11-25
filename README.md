@@ -40,9 +40,13 @@ Serviços iniciados:
 
 - `.agents/skills/`: Skills de suporte a boas práticas (commits, segredos, contratos pydantic, testes e health check).
 - `api/`: Rotas de webhooks omnichannel, adaptadores e callbacks.
-- `agents/`: Nós LangGraph (Triage, Quality/Batch, Decision Engine, Liaison, Synthesis).
-- `core/`: Configurações de ambiente, modelos SQLAlchemy e contratos Pydantic v2.
-- `data/`: Datasets sintéticos (`batches.csv`, `customers.csv`, `orders.csv`, `historic_tickets.csv`).
+- `agents/`: Somente agentes de LLM, que decidem o próprio caminho em laço: investigador de causa raiz e atendente ReAct.
+- `workflows/`: Caminho definido em código: orquestrador LangGraph, estado do grafo, contenção de lote e juiz da resposta (passo avaliador).
+- `integrations/`: Adaptadores para sistemas externos (A2A com especialistas via Slack/Teams).
+- `classifiers/`: Modelos de classificação da triagem (não são agentes).
+- `llm/`: Fábrica de chat models por papel (Ollama ou API compatível com OpenAI) e dublê para testes.
+- `core/`: Configurações, modelos SQLAlchemy, contratos Pydantic v2, política determinística e mascaramento de dados pessoais.
+- `data/`: Datasets sintéticos reprodutíveis (`batches.csv`, `customers.csv`, `orders.csv`, `units.csv`, `historic_tickets.csv`).
 - `mcp_server/`: Servidor e ferramentas MCP.
 - `scripts/`: Seed do banco de dados e simulador de tráfego (Test Harness).
 - `ui/`: Dashboard Streamlit para demonstração interativa.
