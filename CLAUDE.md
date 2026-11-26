@@ -283,9 +283,11 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 **Existe:** `core/{config,database,schemas,policy_config,privacy}.py` · `llm/{factory,testing}.py` · `mcp_server/{server,database_tools,inventory_tools,investigation_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules,test_llm_factory,test_investigation_tools,test_privacy}.py` · `tests/smoke/test_ollama_smoke.py` (opt-in, `-m ollama`) · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
 
+**Etapa 5 em andamento (2026-11-25):** código pronto e testado com dublê: `agents/investigator.py` (grafo `agent ↔ tools → finalize`; limites de passos, repetição, contexto, tempo; lista fechada), `integrations/mcp_tools.py` (adaptador próprio MCP→LangChain; o oficial exige `mcp<2`), `core/audit.py` (`AuditSink`), contratos `InvestigationDraft`/`InvestigationReport` em `core/schemas.py`, `scripts/run_investigation.py`, `tests/test_investigator.py` e `tests/test_mcp_tools.py`. **Falta:** rodar contra o Ollama real com Postgres+MCP no ar, conferir `audit_events`, registrar as decisões D26 (agente: grafo explícito, duas fases, metadados pelo código, limites), D27 (adaptador MCP próprio) e D28 (auditoria por interface) na seção 5, atualizar 8.2 e o README.
+
 **Testes de integração** (`@pytest.mark.integration`): usam o banco `<POSTGRES_DB>_test` (criado automaticamente, esquema recriado a cada execução, rollback por teste); são pulados se o Postgres não responder. Nunca tocam o banco de desenvolvimento.
 
-**Não existe:** `api/*` · `agents/*` · `workflows/*` · `integrations/*` · `core/decision_engine.py` · `classifiers/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py`.
+**Não existe:** `api/*` · `workflows/*` · `core/decision_engine.py` · `classifiers/*` · `ui/*` · `scripts/simulate_traffic.py` · `tests/mocks/*` · `tests/test_flows.py`.
 
 **Divergências a corrigir, em ordem:**
 
@@ -297,7 +299,7 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 6. **`pyproject.toml`:** ~~`mcp>=2,<3`~~ feito (instalado 2.3.0). Pendente: incluir `classifiers*` e `llm*` no `include` quando existirem; adicionar dependências das etapas conforme chegarem.
 7. ~~`.env.example` e `core/config.py`~~ **resolvido na Etapa 0:** `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (`SecretStr`), `LLM_TEMPERATURE`, `LLM_NUM_CTX`, `LLM_TIMEOUT_SECONDS`; `LLM_DOCKER_BASE_URL` (URL vista de dentro dos containers; `host.docker.internal` com `extra_hosts: host-gateway`). Variáveis `OPENAI_*` removidas. Se o Jev for usado, adicionar `TYPESAFE_API_KEY` e `TYPESAFE_DEFAULT_MODEL`.
 8. Menores: ~~datas sem fuso no seed~~ (resolvido na Etapa 1: CSVs em ISO 8601 UTC, `fromisoformat`); `get_customer` normaliza e-mail e não telefone (normalizar para E.164). `.gitignore` cobre `.env`, `__pycache__/` e `.venv/` (ok); `.gitattributes` criado (Etapa 0). **Não leia nem comite o `.env` real.**
-9. **Testes de integração lentos sem Postgres:** com o banco fora do ar, os testes são pulados corretamente, mas cada um espera o tempo limite de conexão (suíte de ~20 s passou a 132 s em 2026-11-24). Detectar a indisponibilidade uma vez por execução no `conftest.py` e pular os demais na hora.
+9. ~~Testes de integração lentos sem Postgres~~ **resolvido na Etapa 5:** `conftest.py` guarda a indisponibilidade na 1ª tentativa e pula os demais na hora (timeout de conexão de 3 s): 132 s → 9 s.
 
 ## 10. Roteiro por etapas (investigador primeiro — D17)
 
@@ -310,7 +312,7 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, a **tabe
 | 2 ✅ | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
 | 3 ✅ | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
 | 4 ✅ | `mcp_server/investigation_tools.py` com testes | Desenho de ferramentas para LLM: pequenas, tipadas, agregadas, seguras |
-| 5 | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
+| 5 🚧 | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
 | 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada, métricas, ajuste de prompt, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |
 | 7 | `core/policy_config.py`, `core/decision_engine.py` e classificador: `Fake` + lexical → NLI → treinado; tradução opcional; conjunto dourado e calibração | Camada determinística vs. modelo; fail-closed; ciclo de ML; avaliação por campo |
 | 8 | Orquestrador (`workflows/graph.py`, `workflows/state.py`), contenção de lote integrada (`workflows/batch_containment.py`), HITL, `integrations/specialist_liaison.py`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, A2A |

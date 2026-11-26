@@ -1,19 +1,13 @@
 """Testes do transporte do MCP Server (D1: streamable HTTP, não stdio).
 
 Sobe a aplicação HTTP do servidor em uma porta livre e conecta um cliente MCP
-real. Não precisa de Postgres: listar ferramentas não toca no banco.
+real (fixture `mcp_base_url`, em conftest.py). Não precisa de Postgres:
+listar ferramentas não toca no banco.
 """
 
-import asyncio
-import socket
-
 import httpx
-import pytest
-import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-
-from mcp_server.server import mcp
 
 EXPECTED_TOOLS = {
     "lookup_customer",
@@ -31,27 +25,6 @@ EXPECTED_TOOLS = {
     "sample_defect_complaints",
 }
 WRITE_TOOLS = {"block_batch", "queue_alerts"}
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture
-async def mcp_base_url():
-    """Servidor MCP HTTP efêmero, encerrado ao fim do teste."""
-    port = _free_port()
-    server = uvicorn.Server(
-        uvicorn.Config(mcp.streamable_http_app(), host="127.0.0.1", port=port, log_level="warning")
-    )
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    await task
 
 
 async def test_health_endpoint(mcp_base_url):

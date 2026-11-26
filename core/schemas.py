@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, date, timezone
 from decimal import Decimal
-from typing import Any, Dict, Optional, List
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Dict, Literal, Optional, List
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.database import (
     AlertStatus,
@@ -263,3 +263,75 @@ class SpecialistDossierPayload(BaseSchema):
     recommendation: str = Field(
         default="Investigar linha de montagem e confirmar ordem formal de recall"
     )
+
+
+# -----------------------------------------------------------------------------
+# Investigação de causa raiz (CLAUDE.md 8.2; D26-D28)
+# -----------------------------------------------------------------------------
+Confidence = Literal["baixa", "media", "alta"]
+StopReason = Literal[
+    "final_answer",      # o modelo concluiu sozinho
+    "max_steps",         # limite de chamadas ao modelo no laço
+    "repeated_calls",    # insistiu em repetir chamadas idênticas
+    "context_budget",    # entrada perto do num_ctx (o Ollama cortaria o começo em silêncio)
+    "timeout",           # tempo total esgotado
+    "invalid_output",    # relatório fora do esquema mesmo após 1 nova tentativa
+    "model_error",       # falha ao chamar o modelo (rede, servidor)
+]
+
+
+class Hypothesis(BaseSchema):
+    """Uma hipótese de causa, com as evidências que a sustentam (escrita pelo modelo)."""
+
+    description: str = Field(..., min_length=5, max_length=400)
+    evidence: List[str] = Field(
+        ..., min_length=1, max_length=5, description="Números e fatos vindos das ferramentas"
+    )
+    confidence: Confidence
+
+
+class InvestigationDraft(BaseSchema):
+    """O que o MODELO escreve no fim da investigação. Metadados ficam com o código."""
+
+    root_cause_identified: bool = Field(
+        ..., description="true só se as evidências apontam uma causa com clareza"
+    )
+    hypotheses: List[Hypothesis] = Field(
+        default_factory=list, max_length=3, description="Da mais para a menos provável"
+    )
+    unknowns: List[str] = Field(default_factory=list, max_length=5)
+    recommended_checks: List[str] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def _identified_needs_hypothesis(self) -> "InvestigationDraft":
+        if self.root_cause_identified and not self.hypotheses:
+            raise ValueError("root_cause_identified=true exige ao menos uma hipótese")
+        return self
+
+
+class ToolCallRecord(BaseSchema):
+    """Registro de uma chamada de ferramenta, feito pelo CÓDIGO (não pelo modelo)."""
+
+    name: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+    status: Literal["ok", "error", "rejected", "repeated"]
+
+
+class InvestigationReport(InvestigationDraft):
+    """Relatório final: conteúdo do modelo + metadados confiáveis do código.
+
+    Tudo aqui é HIPÓTESE para o especialista validar; nunca dispara recall.
+    """
+
+    batch_id: str
+    thread_id: str
+    stop_reason: StopReason
+    steps: int = Field(..., ge=0, description="Chamadas ao modelo no laço de investigação")
+    tools_called: List[ToolCallRecord] = Field(default_factory=list)
+    finalize_attempts: int = Field(default=0, ge=0, le=2)
+    model_version: str
+    duration_seconds: float = Field(..., ge=0)
+
+    @property
+    def is_indeterminate(self) -> bool:
+        return not self.root_cause_identified

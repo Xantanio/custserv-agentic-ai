@@ -5,6 +5,10 @@ ferramentas precisa. `ScriptedChatModel` devolve, em ordem, as respostas
 roteirizadas (inclusive `tool_calls`) e REGISTRA o que recebeu, para os testes
 verificarem o comportamento do agente: quais mensagens enviou, quais
 ferramentas lhe foram dadas (menor privilégio), quantas vezes chamou o modelo.
+
+Saída estruturada: `with_structured_output(Schema)` usa a implementação padrão
+do LangChain (vincula o esquema como ferramenta), então a resposta roteirizada
+é `structured_reply(Schema, {...})`.
 """
 
 from typing import Any, Callable, Optional, Sequence
@@ -30,6 +34,11 @@ def tool_call(name: str, args: dict[str, Any], call_id: Optional[str] = None) ->
     )
 
 
+def structured_reply(schema: type, data: dict[str, Any]) -> AIMessage:
+    """Atalho: resposta a `with_structured_output(schema)` (chamada da "ferramenta" do esquema)."""
+    return tool_call(schema.__name__, data, call_id=f"call_{schema.__name__}")
+
+
 class ScriptedChatModel(BaseChatModel):
     """Devolve `responses` em ordem; esgotado o roteiro, levanta `ScriptExhaustedError`."""
 
@@ -37,6 +46,9 @@ class ScriptedChatModel(BaseChatModel):
     model_name: str = "scripted-fake"
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     bound_tools: list[dict[str, Any]] = Field(default_factory=list)
+    binding_history: list[list[str]] = Field(
+        default_factory=list, description="Nomes vinculados em cada bind_tools, em ordem"
+    )
 
     @property
     def _llm_type(self) -> str:
@@ -44,7 +56,13 @@ class ScriptedChatModel(BaseChatModel):
 
     @property
     def tool_names(self) -> list[str]:
+        """Ferramentas do ÚLTIMO bind_tools."""
         return [t["function"]["name"] for t in self.bound_tools]
+
+    @property
+    def all_bound_tool_names(self) -> set[str]:
+        """Tudo o que já foi vinculado ao modelo (ferramentas e esquemas de saída)."""
+        return {name for names in self.binding_history for name in names}
 
     def bind_tools(
         self,
@@ -53,6 +71,7 @@ class ScriptedChatModel(BaseChatModel):
     ) -> "ScriptedChatModel":
         """Registra as ferramentas e devolve o PRÓPRIO objeto (o roteiro e o registro são compartilhados)."""
         self.bound_tools = [convert_to_openai_tool(t) for t in tools]
+        self.binding_history.append(self.tool_names)
         return self
 
     def _generate(
