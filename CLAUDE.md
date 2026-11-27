@@ -56,16 +56,17 @@ omniops-ai/
 │   ├── main.py                          FastAPI e ciclo de vida
 │   ├── routes/{webhooks,slack_callback}.py
 │   └── adapters/omnichannel.py          payload externo -> StandardTicket
-├── agents/                        [novo]  SÓ agentes de LLM: decidem o próprio caminho, em laço (D25)
-│   ├── investigator.py                  investigador de causa raiz, autônomo e somente leitura (Etapa 5)
-│   └── generalist.py                    atendente ReAct de contatos simples (Etapa 9)
+├── agents/                        [ok]    SÓ agentes de LLM: decidem o próprio caminho, em laço (D25)
+│   ├── investigator.py            [ok]    investigador de causa raiz, autônomo e somente leitura (Etapa 5, D26)
+│   └── generalist.py              [novo]  atendente ReAct de contatos simples (Etapa 9)
 ├── workflows/                     [novo]  caminho definido no código (LangGraph ou funções)
 │   ├── state.py                         estado tipado do grafo
 │   ├── graph.py                         orquestrador (StateGraph, roteamento determinístico)
 │   ├── batch_containment.py             detecção e contenção do lote (determinístico)
 │   └── response_judge.py                juiz da resposta: passo avaliador (LLM-as-judge), sem laço
-├── integrations/                  [novo]  adaptadores para sistemas externos
-│   └── specialist_liaison.py            enlace HITL com o especialista (Slack/Teams): publica dossiê e recebe a resposta
+├── integrations/                  [ok]    adaptadores para sistemas externos
+│   ├── mcp_tools.py               [ok]    adaptador MCP -> ferramentas LangChain, com lista de permitidas (D27)
+│   └── specialist_liaison.py      [novo]           enlace HITL com o especialista (Slack/Teams): publica dossiê e recebe a resposta
 ├── classifiers/                   [novo]  modelo de classificação, não agente
 │   ├── triage.py                        interface TriageClassifier, TriageResult e implementações
 │   └── translation.py                   interface Translator e TranslatingClassifier (decorator)
@@ -77,10 +78,11 @@ omniops-ai/
 │   └── investigation_tools.py     [ok]    ferramentas de leitura/agregação + INVESTIGATOR_TOOLS
 ├── core/                          [ok]
 │   ├── config.py, database.py, schemas.py, privacy.py (mask_pii)
+│   ├── audit.py                   [ok]    AuditSink: InMemoryAuditSink (testes) e SqlAuditSink (audit_events) (D28)
 │   ├── policy_config.py           [ok]    limiares (lote: Etapa 2) · [novo] palavras-chave (Etapa 7)
 │   └── decision_engine.py         [novo]  política determinística (PolicyDecision; Etapa 7)
 ├── data/                          [ok]  customers.csv, batches.csv, orders.csv, historic_tickets.csv · [novo] units.csv
-├── scripts/                       [ok]  generate_synthetic_data.py, seed_db.py · [novo] simulate_traffic.py, run_investigation.py
+├── scripts/                       [ok]  generate_synthetic_data.py, seed_db.py, run_investigation.py · [novo] simulate_traffic.py
 ├── ui/app.py                      [novo]  Streamlit
 ├── tests/                         [ok]  test_phase1.py · [novo] mocks/*.json, test_flows.py, evals/
 ├── docker-compose.yml, Dockerfile, pyproject.toml, README.md, .env.example   [ok]
@@ -115,7 +117,11 @@ omniops-ai/
 | D24 | **Ferramentas do investigador:** lista fechada `INVESTIGATOR_TOOLS` (6): `check_batch_failure_rate`, `defect_rate_by(batch_id, dimension)` (uma ferramenta com `dimension` enumerada em vez de quatro), `compare_factory_batches`, `complaint_timeline`, `search_symptoms`, `sample_defect_complaints` (máx. 8). Devolvem **taxas já normalizadas** pela base do grupo (produzidas para linha/dia; vendidas para transportadora/semana), texto livre via `mask_pii`, orçamento de **≤ 1.500 caracteres por resposta** (testado) e erros com as opções válidas. Todas as ferramentas MCP têm `ToolAnnotations` (dica ao cliente, não proteção). `get_batch_defect_symptoms` (texto sem máscara, para o dossiê humano) e `find_silent_customers` (contatos) **ficam fora** | Para modelos pequenos, poucas ferramentas e respostas curtas importam mais que o prompt; cálculo é determinístico (princípio 1). Achado: nos dados, as taxas por transportadora variam por **ruído de amostra pequena** (ExpressoNorte 0,70 com 20 unidades × RotaSul 0,52 com 42), o que vira um distrator realista, muito mais fraco que L2 0,90 × L1 0,08. O servidor MCP também valida o `enum` e devolve as opções ao modelo |
 | D25 | **Nomes e pastas pela natureza da peça** (seção 8.6): `agents/` só contém agentes de LLM (`investigator.py`, `generalist.py`); `workflows/` tem `state.py`, `graph.py`, `batch_containment.py` (ex-`quality_agent`) e `response_judge.py` (ex-`judge_agent`); `integrations/specialist_liaison.py` (ex-`liaison_agent`); `core/decision_engine.py`. Sem sufixo `_agent` em arquivos. **Pendência da Etapa 10:** se o juiz ganhar ferramentas para verificar fatos por conta própria (laço), ele passa a ser agente e muda para `agents/` | Decidido em 2026-11-24, antes de qualquer arquivo existir (custo zero). Chamar workflow, adaptador ou regra de "agente" esconde a arquitetura e soa como exagero em entrevista. Descartados: manter `agents/` e só renomear arquivos (a pasta continuaria imprecisa); pasta genérica `components/` (perde a informação); `policy/` para um arquivo só |
 | D22 | **Ticket com serial válido do lote e sem pedido informado conta no numerador**; serial que não corresponde ao pedido citado (outro lote, outro pedido ou unidade em estoque) não conta em lote nenhum e vai para HITL | O serial identifica a unidade física; subcontar atrasaria a contenção de um risco de segurança (bateria estufada). A posse da unidade é verificada depois, no HITL. Inconsistência nunca infla nenhum lote |
-| D29 | **O protocolo A2A (Agent2Agent) fica fora do núcleo**; vira extensão opcional após a Etapa 11 (Etapa 13, seção 8.7). Terminologia: o enlace com o especialista humano é **HITL**, não A2A | Todos os agentes rodam no mesmo processo e domínio de confiança; o A2A resolve delegação entre agentes **independentes e opacos** e acrescentaria rede, falhas e estado distribuído sem ganho, além de ir contra o roteamento determinístico (princípio 4). Decidido em 2026-11-26. Numeração: D26–D28 seguem reservadas pela Etapa 5 |
+| D26 | **Agente investigador como grafo LangGraph explícito** `agent ↔ tools → finalize` (não o `create_react_agent` pronto), **em duas fases**: no laço o modelo só escolhe a próxima ferramenta; no `finalize` só converte o que achou em `InvestigationDraft` (`with_structured_output`, 1 nova tentativa). O modelo escreve o **conteúdo** (hipóteses, evidências, confiança); os **metadados** (`tools_called`, `steps`, `stop_reason`, `model_version`, duração) vêm do código. Limites: 8 passos, 2 repetições, 85% de `num_ctx`, tempo total (300 s); lista fechada verificada **no construtor** (fail-closed). Sempre devolve relatório: falha ou orçamento estourado viram `causa indeterminada`. Modelo, ferramentas e auditoria por **injeção**; `scripts/run_investigation.py` é a raiz de composição | Pedir a um modelo de 4B que decida e formate JSON ao mesmo tempo multiplica erros. Um LLM não deve declarar o que fez (pode alucinar). Os nós explícitos tornam cada limite visível e testável com o `ScriptedChatModel`. Descartados: `create_react_agent` (esconde onde entram os limites); resposta estruturada direto no laço. Medido em 2026-11-27 (seção 9) |
+| D27 | **Adaptador MCP → LangChain próprio** (`integrations/mcp_tools.py`): abre sessão streamable HTTP, lista as ferramentas, mantém só as permitidas e falha (`MissingToolsError`) se faltar alguma exigida; o esquema JSON (inclusive `enum`) vem do servidor | O `langchain-mcp-adapters` exige `mcp<2`, e o projeto fixa `mcp>=2,<3` (D2). São ~100 linhas testadas em `tests/test_mcp_tools.py`; reavaliar se o oficial passar a suportar a 2.x |
+| D28 | **Auditoria por interface** (`core/audit.py`, `AuditSink`): o agente grava eventos por injeção; `InMemoryAuditSink` nos testes, `SqlAuditSink` (uma transação curta por evento) em execução real. Cada chamada de ferramenta vira `tool_result` (prévia de 300 caracteres) e o relatório vira `model_interpretation` com `prompt_version` | O agente não recebe ferramenta de escrita, nem para auditoria (menor privilégio). Testes não precisam de banco. Descartado: gravar auditoria via ferramenta MCP (daria ao agente um caminho de escrita) |
+| D29 | **O protocolo A2A (Agent2Agent) fica fora do núcleo**; vira extensão opcional após a Etapa 11 (Etapa 13, seção 8.7). Terminologia: o enlace com o especialista humano é **HITL**, não A2A | Todos os agentes rodam no mesmo processo e domínio de confiança; o A2A resolve delegação entre agentes **independentes e opacos** e acrescentaria rede, falhas e estado distribuído sem ganho, além de ir contra o roteamento determinístico (princípio 4). Decidido em 2026-11-26. Numeração: D26–D28 registradas ao fechar a Etapa 5 |
+| D30 | **Modo C: Ollama em contêiner Docker no próprio notebook, só CPU**, em `127.0.0.1:11434` (`docker run -d --name ollama -p 127.0.0.1:11434:11434 -v ollama:/root/.ollama ollama/ollama`), para desenvolver quando o PC Windows ou a VPN não estão disponíveis. `LLM_TIMEOUT_SECONDS=300` no `.env` do notebook. **Números de latência para a Etapa 6 só valem no hardware alvo** (PC Windows) | Decidido em 2026-11-27, com o PC Windows desligado e a VPN ainda não configurada. Contêiner em vez do instalador oficial: não roda script de root, não deixa serviço residente e sai com `docker rm -f ollama`; o `127.0.0.1` evita expor um serviço sem autenticação na rede. Medido (i5-1145G7, 16 GB, Ollama 0.40.18, `qwen3:4b-instruct` Q4_K_M, `num_ctx` 4096): geração **8,8 tok/s** (igual à GPU com 34% de offload, D20); leitura de prompt **~24 tok/s**, o gargalo: ~1.500 tokens custam ~60 s |
 
 ## 6. Modelo de dados e fórmulas
 
@@ -127,7 +133,7 @@ omniops-ai/
 - **`units`** *(novo, D6)*: `serial_number` PK · `batch_id` FK · `product_id` · `order_id` FK anulável · `production_line` · `manufactured_at`. As colunas de produção existem para a investigação de causa raiz.
 - **`tickets`**: `ticket_id` UUID PK · `thread_id` (sessão LangGraph) · `customer_id` FK · `order_id` FK anulável · **`serial_number` FK anulável para `units`** · `channel` ∈ {`whatsapp`,`email`,`reclame_aqui`} · `message_text` · `intent` (`defective_item`, `shipping_delay`, `health_issue`, `refund_request`, `tracking_inquiry`, `other`) · `sentiment_score` −1.0..1.0 · `sentiment_label` ∈ {`Positivo`,`Neutro`,`Negativo`,`Extremamente Negativo`} · `is_health_risk` · `batch_flagged` · `priority_score` 0..100 · `autonomy_status` ∈ {`auto_resolved`,`human_in_the_loop`,`escalated_specialist`} · `created_at`. `serial_number NULL` significa "unidade não identificada".
 - **`proactive_alert_events`**: `event_id` · `order_id` FK, **`UNIQUE(order_id)`** (`uq_alert_per_order`: um alerta por pedido; novas tentativas atualizam a linha) · `status` ∈ {`pending`,`attempted`,`failed`,`delivered`} · `template_id` (D11; hoje `recall_alert_v1`) · `attempts` · `provider_message_id` · `last_error` · `created_at`/`updated_at`/`delivered_at`. **Só conta como alerta enviado após `delivered`** (confirmação do provedor). Enfileirar usa `INSERT ... ON CONFLICT DO NOTHING` (idempotente).
-- **`audit_events`**: `event_id` · `thread_id` · `kind` ∈ {`model_interpretation`,`tool_result`,`rule_applied`,`decision`,`action`} · `payload` JSON (sem dados pessoais desnecessários) · `model_version` / `rule_id` · timestamp.
+- **`audit_events`**: `event_id` · `thread_id` · `kind` ∈ {`model_interpretation`,`tool_result`,`rule_applied`,`decision`,`action`} · `payload` JSON (sem dados pessoais desnecessários) · `model_version` / `rule_id` · timestamp. **Atenção (divergência 10 da seção 9):** todas as colunas enum gravam o **nome** do membro (`TOOL_RESULT`, `DELIVERED_SIGNED`, `REGULAR`), não o valor listado aqui; em SQL cru, filtrar por nome.
 
 ### 6.2 Fórmulas determinísticas
 
@@ -243,9 +249,9 @@ Agente de LLM **autônomo e somente leitura**, acionado quando a taxa do lote at
 
 - **Ferramentas (MCP, só leitura, dados agregados e sem PII)**, em `mcp_server/investigation_tools.py` (implementadas na Etapa 4, D24): `check_batch_failure_rate`; `defect_rate_by(batch_id, dimension ∈ {production_line, manufacturing_day, carrier, purchase_week})`; `compare_factory_batches`; `complaint_timeline`; `search_symptoms(batch_id, term)`; `sample_defect_complaints(batch_id, limit≤8)`. O agente recebe **só** `INVESTIGATOR_TOOLS`.
 - **Saída** (`InvestigationReport`, Pydantic): `hypotheses[]` (descrição, evidências, testes executados, confiança), `unknowns[]`, `recommended_checks[]`, `tools_called[]`, `stop_reason`. O agente pode concluir "causa indeterminada". Tudo é **hipótese para o especialista validar**, nunca recall.
-- **Implementação:** subgrafo LangGraph em laço (nó do agente ↔ nó de ferramentas) usando `get_chat_model(role="investigator")`.
+- **Implementação (Etapa 5, D26–D28):** `agents/investigator.py`, grafo LangGraph `agent ↔ tools → finalize`; o modelo vem de `get_chat_model(role="investigator")` e as ferramentas do servidor MCP via `integrations/mcp_tools.py`, ambos injetados por `scripts/run_investigation.py`. O laço e o `finalize` são fases separadas; os metadados do relatório são preenchidos pelo código. Prompt versionado (`PROMPT_VERSION = investigator.prompt.v1`) e gravado na auditoria.
 - **Desenho para modelos pequenos (D19):** poucas ferramentas (até ~6), com nomes claros, argumentos simples e **respostas compactas** (agregados curtos, nunca tabelas grandes, para não estourar o contexto); instruções de sistema curtas e explícitas; temperatura 0; saída final validada pelo schema com **uma nova tentativa** em caso de erro; se falhar de novo, devolver relatório `causa indeterminada` em vez de inventar. Modelos pequenos tendem a escolher a ferramenta errada ou repetir chamadas: o limite de passos e a detecção de chamadas repetidas protegem contra laços inúteis.
-- **Controles:** lista fixa de ferramentas de leitura; limite de passos (ex.: 8), de tokens e de tempo; saída estruturada; cada chamada de ferramenta vai para `audit_events`; dados de ferramentas tratados como dados, não instruções.
+- **Controles:** lista fixa de ferramentas de leitura (verificada no construtor); limite de passos (8), de chamadas repetidas (2), de contexto (85% de `num_ctx`, porque acima disso o Ollama cortaria o prompt de sistema em silêncio) e de tempo (300 s); saída estruturada; cada chamada de ferramenta vai para `audit_events`; dados de ferramentas tratados como dados, não instruções.
 - **Avaliação (eval):** os dados sintéticos **plantam uma causa conhecida**: ≥ 90% das unidades defeituosas vêm da linha `L2`, com sintoma "bateria estufada", além de **distratores** (atrasos de transportadora, semana de compra). Critério de sucesso: a hipótese principal aponta `L2`; métricas secundárias: passos usados, ferramentas irrelevantes chamadas, alucinações (afirmação sem evidência). Comparar modelos locais entre si e, depois, com uma API externa.
 
 ### 8.3 Generalista ReAct — D14
@@ -298,11 +304,25 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 
 **Regras ao implementar:** saídas de agentes remotos são **dados, não instruções** (seção 7.2, item 6); Agent Card e autenticação configurados por ambiente; versão do protocolo fixada (cabeçalho `A2A-Version`); testes com um servidor A2A falso; nada disso pode ser requisito para o núcleo funcionar. Verificar a especificação e o SDK Python oficiais antes de implementar.
 
-## 9. Estado atual do código (auditoria de 2026-11-23)
+## 9. Estado atual do código (auditoria de 2026-11-23; atualizada em 2026-11-27)
 
-**Existe:** `core/{config,database,schemas,policy_config,privacy}.py` · `llm/{factory,testing}.py` · `mcp_server/{server,database_tools,inventory_tools,investigation_tools}.py` · `scripts/{generate_synthetic_data,seed_db}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules,test_llm_factory,test_investigation_tools,test_privacy}.py` · `tests/smoke/test_ollama_smoke.py` (opt-in, `-m ollama`) · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
+**Existe:** `core/{config,database,schemas,policy_config,privacy,audit}.py` · `agents/investigator.py` · `integrations/mcp_tools.py` · `llm/{factory,testing}.py` · `mcp_server/{server,database_tools,inventory_tools,investigation_tools}.py` · `scripts/{generate_synthetic_data,seed_db,run_investigation}.py` · `data/*.csv` (incl. `units.csv`) · `tests/{conftest,test_phase1,test_mcp_transport,test_data_model,test_batch_rules,test_llm_factory,test_investigation_tools,test_privacy,test_investigator,test_mcp_tools}.py` · `tests/smoke/test_ollama_smoke.py` (opt-in, `-m ollama`) · `Dockerfile` · `docker-compose.yml` · `.env.example` · `.gitattributes` · `.agents/skills/*`.
 
-**Etapa 5 em andamento (2026-11-25):** código pronto e testado com dublê: `agents/investigator.py` (grafo `agent ↔ tools → finalize`; limites de passos, repetição, contexto, tempo; lista fechada), `integrations/mcp_tools.py` (adaptador próprio MCP→LangChain; o oficial exige `mcp<2`), `core/audit.py` (`AuditSink`), contratos `InvestigationDraft`/`InvestigationReport` em `core/schemas.py`, `scripts/run_investigation.py`, `tests/test_investigator.py` e `tests/test_mcp_tools.py`. **Falta:** rodar contra o Ollama real com Postgres+MCP no ar, conferir `audit_events`, registrar as decisões D26 (agente: grafo explícito, duas fases, metadados pelo código, limites), D27 (adaptador MCP próprio) e D28 (auditoria por interface) na seção 5, atualizar 8.2 e o README.
+**Etapa 5 concluída (2026-11-27):** agente investigador com testes de dublê (20 em `tests/test_investigator.py` e `tests/test_mcp_tools.py`) e executado de ponta a ponta contra Ollama, MCP e Postgres reais no modo C (D30). Duas execuções de `run_investigation.py LOTE-2026-DEF`:
+
+| Execução | Orçamento | Resultado | Passos | Tempo |
+|---|---|---|---|---|
+| 1 | 300 s | `timeout` → `causa indeterminada` (fail-closed, sem hipótese inventada) | 2 | 300 s |
+| 2 | 900 s | `final_answer`; **hipótese 1 = linha L2** (0,90 × 0,08), confiança alta; relatório válido na 1ª tentativa | 2 | 214 s |
+
+Nas duas, o 1º passo pediu 4 ferramentas em paralelo (`check_batch_failure_rate`, `defect_rate_by` por linha e por dia, `complaint_timeline`). `audit_events` recebeu os `tool_result` e o `model_interpretation` com o `thread_id`.
+
+**Achados para a Etapa 6 (não corrigidos de propósito: medir antes de mudar):**
+- **Afirmação sem evidência:** a hipótese 3 citou transportadora sem chamar `defect_rate_by(carrier)`, e as incógnitas disseram "não há dados sobre a transportadora" (confunde "não consultei" com "não existe").
+- **Distrator superestimado:** dia 2026-10-01 (0,538 × 0,44–0,50 nos outros dias, ruído) recebeu confiança média.
+- **Exploração curta:** 2 passos; não chamou `carrier`, `purchase_week`, `compare_factory_batches` nem `search_symptoms`, apesar da regra 2 do prompt.
+- **Tempo instável:** mesmo caminho, 300+ s × 214 s. No timeout, as evidências já coletadas são descartadas (o `finalize` não roda); avaliar um `finalize` com o que houver.
+- **Cache de prompt pouco reaproveitado** entre passos (prefixo comum de ~237 tokens no log do Ollama): na CPU, reler o prompt inteiro a cada passo domina o tempo. Investigar a causa (ordem/formato das mensagens, ferramentas em paralelo).
 
 **Testes de integração** (`@pytest.mark.integration`): usam o banco `<POSTGRES_DB>_test` (criado automaticamente, esquema recriado a cada execução, rollback por teste); são pulados se o Postgres não responder. Nunca tocam o banco de desenvolvimento.
 
@@ -319,6 +339,8 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 7. ~~`.env.example` e `core/config.py`~~ **resolvido na Etapa 0:** `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (`SecretStr`), `LLM_TEMPERATURE`, `LLM_NUM_CTX`, `LLM_TIMEOUT_SECONDS`; `LLM_DOCKER_BASE_URL` (URL vista de dentro dos containers; `host.docker.internal` com `extra_hosts: host-gateway`). Variáveis `OPENAI_*` removidas. Se o Jev for usado, adicionar `TYPESAFE_API_KEY` e `TYPESAFE_DEFAULT_MODEL`.
 8. Menores: ~~datas sem fuso no seed~~ (resolvido na Etapa 1: CSVs em ISO 8601 UTC, `fromisoformat`); `get_customer` normaliza e-mail e não telefone (normalizar para E.164). `.gitignore` cobre `.env`, `__pycache__/` e `.venv/` (ok); `.gitattributes` criado (Etapa 0). **Não leia nem comite o `.env` real.**
 9. ~~Testes de integração lentos sem Postgres~~ **resolvido na Etapa 5:** `conftest.py` guarda a indisponibilidade na 1ª tentativa e pula os demais na hora (timeout de conexão de 3 s): 132 s → 9 s.
+10. **Enums gravados pelo nome:** o `SQLEnum` sem `values_callable` grava `TOOL_RESULT`, `DELIVERED_SIGNED`, `REGULAR` em vez dos valores da seção 6.1. O código Python não percebe (converte de volta), mas SQL cru e ferramentas externas sim. Corrigir com `values_callable=lambda e: [m.value for m in e]` e recriar o banco (D3), ou como primeira migração da Etapa 12.
+11. **Ambiente local desatualizado não aparece nos testes:** o `.venv` criado antes de `langchain-ollama` entrar no `pyproject.toml` passava em tudo com o dublê e só falhou no smoke test. Rodar `pip install -e ".[dev]"` ao puxar mudanças de dependência.
 
 ## 10. Roteiro por etapas (investigador primeiro — D17)
 
@@ -331,8 +353,8 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, a **tabe
 | 2 ✅ | Taxa por unidades distintas e silenciosos por pedido, com testes (49% → 50%, duplicata, sem serial) | TDD em regra de negócio; SQL com `DISTINCT` e subqueries |
 | 3 ✅ | `llm/factory.py` (Ollama; chat model falso para testes; smoke test opcional) | Abstração de provedor; testar código com LLM sem LLM |
 | 4 ✅ | `mcp_server/investigation_tools.py` com testes | Desenho de ferramentas para LLM: pequenas, tipadas, agregadas, seguras |
-| 5 🚧 | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
-| 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada, métricas, ajuste de prompt, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |
+| 5 ✅ | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
+| 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada (repetindo cada caso), métricas, ajuste de prompt a partir dos achados da seção 9, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |
 | 7 | `core/policy_config.py`, `core/decision_engine.py` e classificador: `Fake` + lexical → NLI → treinado; tradução opcional; conjunto dourado e calibração | Camada determinística vs. modelo; fail-closed; ciclo de ML; avaliação por campo |
 | 8 | Orquestrador (`workflows/graph.py`, `workflows/state.py`), contenção de lote integrada (`workflows/batch_containment.py`), HITL, `integrations/specialist_liaison.py`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, enlace HITL com o especialista |
 | 9 | Generalista ReAct (`agents/generalist.py`), com avaliação | Agente voltado ao cliente com menor privilégio |
@@ -362,6 +384,8 @@ pip install -e ".[dev]"                    # ambiente local
 pytest -v                                  # testes
 python scripts/generate_synthetic_data.py  # regenera data/*.csv
 python scripts/seed_db.py                  # popula o Postgres a partir dos CSVs
+pytest -m ollama -s                        # smoke test contra o Ollama real (opt-in)
+python scripts/run_investigation.py LOTE-2026-DEF [--timeout 900] [--json]   # investigador real
 ```
 
 Portas: API 8000 · MCP 8001 · Streamlit 8501 · Postgres 5432 · Ollama 11434 (padrão).
@@ -372,14 +396,15 @@ Portas: API 8000 · MCP 8001 · Streamlit 8501 · Postgres 5432 · Ollama 11434 
 - **PC Windows com GPU (RTX 4 GB de VRAM, 8 GB de RAM):** servidor de LLM (Ollama) e, **às vezes, também executa o código** diretamente.
 - Os dois se conectam por **VPN privada** (solução a escolher; opções comuns: Tailscale, WireGuard, ZeroTier; verificar).
 
-**Dois modos de uso, mesma base de código, configuração diferente:**
+**Três modos de uso, mesma base de código, configuração diferente:**
 
 | Modo | Onde roda o código | `LLM_BASE_URL` no `.env` | Observações |
 |---|---|---|---|
 | A. Remoto | Notebook | `http://<ip-da-vpn-do-pc>:11434` | Só as chamadas de LLM atravessam a VPN; Postgres e dados ficam no notebook |
 | B. Local no Windows | PC Windows | `http://localhost:11434` | Exige o projeto e um Postgres no Windows (ver abaixo) |
+| C. Tudo no notebook (D30) | Notebook | `http://localhost:11434` | Ollama em contêiner, só CPU; para desenvolver sem o PC. Não serve para medir latência |
 
-O `.env` não vai para o git e é específico de cada máquina; o `.env.example` documenta os dois valores de `LLM_BASE_URL`.
+O `.env` não vai para o git e é específico de cada máquina; o `.env.example` documenta os valores de `LLM_BASE_URL`.
 
 **PC Windows como servidor de Ollama (modo A):**
 1. Instalar o Ollama para Windows (usa a GPU NVIDIA diretamente) e baixar o modelo: `ollama pull qwen3:4b`.
@@ -401,6 +426,7 @@ O `.env` não vai para o git e é específico de cada máquina; o `.env.example`
 
 - VPN entre o notebook e o PC Windows (seção 12): qual solução será usada (Tailscale, WireGuard, ZeroTier...)? Anotar o IP do PC na VPN e testar `curl http://<ip-da-vpn>:11434/api/tags`. Modo B: Postgres via **Docker Desktop** (decidido em 2026-11-23).
 - Opcional para caber mais na VRAM: `OLLAMA_FLASH_ATTENTION=1` e `OLLAMA_KV_CACHE_TYPE=q8_0` no Windows (KV cache pela metade). Medir antes e depois.
+- Por que o Ollama reaproveita tão pouco do cache de prompt entre os passos do investigador (seção 9)? Se for o formato das mensagens, corrigir reduz o tempo por passo na CPU e na GPU.
 - Medir, na Etapa 6, se `qwen3:4b` basta para o investigador ou se vale comparar com `qwen3:8b` (offload) e com uma API externa de baixo custo.
 - Valores finais dos guardrails (7.2): confirmar limiares, teto diário e limite de `return_rate`; definir as listas de palavras-chave (saúde, ameaça judicial, "caixa vazia").
 - Resposta ao cliente que informa um serial inexistente ou de outro lote: pedir confirmação ou escalar a humano?

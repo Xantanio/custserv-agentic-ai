@@ -4,7 +4,7 @@ Sistema de **atendimento ao cliente e inteligência de operações** para e-comm
 
 Ele recebe reclamações de **WhatsApp, e-mail e Reclame Aqui**, faz a triagem e a análise de risco e **detecta defeitos de fabricação por lote**. Quando um lote passa do limite de falhas, o sistema bloqueia as vendas, avisa os compradores que ainda não reclamaram e aciona um agente que **investiga a causa provável** para o especialista humano validar.
 
-> 🚧 **Projeto em desenvolvimento**, didático e de portfólio. **Etapa 4 de 12 concluída.** A tabela abaixo mostra o que já funciona e o que ainda não existe. A especificação completa, com todas as decisões de engenharia, está em [CLAUDE.md](CLAUDE.md).
+> 🚧 **Projeto em desenvolvimento**, didático e de portfólio. **Etapa 5 de 12 concluída.** A tabela abaixo mostra o que já funciona e o que ainda não existe. A especificação completa, com todas as decisões de engenharia, está em [CLAUDE.md](CLAUDE.md).
 
 ---
 
@@ -17,7 +17,7 @@ Ele recebe reclamações de **WhatsApp, e-mail e Reclame Aqui**, faz a triagem e
 | Taxa de falha do lote por **unidades distintas** e compradores silenciosos **por pedido** | ✅ pronto |
 | Servidor MCP (HTTP) com ferramentas de consulta e de investigação, só leitura | ✅ pronto |
 | Camada de LLM trocável por configuração (Ollama local ou API compatível com OpenAI) | ✅ pronto |
-| **Agente investigador** de causa raiz | 🚧 próxima etapa |
+| **Agente investigador** de causa raiz (só leitura, com limites de passos, tempo e contexto) | ✅ pronto |
 | Avaliação do investigador e comparação entre modelos | ⏳ planejado |
 | Triagem (classificador) e política de decisão com guardrails | ⏳ planejado |
 | Orquestrador com pausa para humano (HITL) e notificação ao especialista | ⏳ planejado |
@@ -67,6 +67,7 @@ Os agentes têm **autonomia proporcional à reversibilidade**: podem ler e anali
 - **A taxa conta unidades, não reclamações.** Contar tickets fazia um lote parecer crítico (51%) quando só 49 unidades tinham defeito. Os testes cobrem a duplicata, a reclamação sem número de série e o serial de outro lote.
 - **Ferramentas desenhadas para um modelo pequeno.** Poucas ferramentas, argumentos enumerados, respostas de até ~400 tokens com taxas já normalizadas, dados pessoais mascarados e garantia testada de que nada é escrito no banco.
 - **Agente avaliável por construção.** Os dados sintéticos plantam uma causa conhecida (linha de produção L2) e distratores (transportadora, semana de compra), para medir se o agente acerta em vez de opinar.
+- **Autonomia limitada pelo código, não pelo prompt.** O investigador escolhe as próprias análises, mas a lista de ferramentas, o número de passos, o tempo e o contexto são travas do código. O relatório registra o que ele de fato chamou (dado do código, não declaração do modelo), e qualquer falha vira "causa indeterminada".
 - **LLM local, provedor trocável.** Ollama com `qwen3:4b-instruct` numa GPU de 4 GB. A escolha do modelo foi medida: a variante com raciocínio era ~6× mais lenta na mesma tarefa.
 
 Todas as decisões, com o motivo e as alternativas descartadas, estão na seção 5 do [CLAUDE.md](CLAUDE.md).
@@ -102,6 +103,9 @@ pytest
 # 4. Opcional: teste contra o Ollama real (texto + chamada de ferramenta)
 ollama pull qwen3:4b-instruct
 pytest -m ollama -s
+
+# 5. O agente investigador, de ponta a ponta (Ollama + MCP + Postgres)
+python scripts/run_investigation.py LOTE-2026-DEF
 ```
 
 **Exemplo:** a ferramenta de investigação aponta a causa plantada.
@@ -117,26 +121,42 @@ python -c "import asyncio, json; from mcp_server.investigation_tools import defe
 ]
 ```
 
+**Exemplo:** o agente decide sozinho o que consultar e aponta a causa (execução real, `qwen3:4b-instruct` em CPU, resumida).
+
+```text
+modelo: ollama:qwen3:4b-instruct | passos: 2 | parada: final_answer | 214.1 s
+Ferramentas chamadas (registro do código, não do modelo):
+  1. check_batch_failure_rate(batch_id=LOTE-2026-DEF)
+  2. defect_rate_by(batch_id=LOTE-2026-DEF, dimension=production_line)
+  3. defect_rate_by(batch_id=LOTE-2026-DEF, dimension=manufacturing_day)
+  4. complaint_timeline(batch_id=LOTE-2026-DEF)
+Conclusão: causa identificada
+  Hipótese 1 (confiança alta): Defeito na linha de produção L2, com taxa de defeito
+  de 90% (45 defeitos em 50 unidades), superior ao padrão das demais linhas (L1: 8%).
+```
+
+O resultado ainda não é perfeito, e isso é o ponto de partida da próxima etapa. Na mesma execução, o modelo deu confiança média a uma variação por dia que é ruído e citou a transportadora sem consultá-la. Com 300 s de orçamento, outra execução parou por tempo e devolveu "causa indeterminada" em vez de inventar. A Etapa 6 mede isso com repetições, em vez de ajustar o prompt com base em uma execução.
+
 ---
 
 ## Estrutura
 
 ```text
-agents/          ⏳ agentes de LLM: investigador e atendente
+agents/          🚧 agentes de LLM: investigador ✅, atendente ⏳
 workflows/       ⏳ orquestrador LangGraph, contenção de lote, juiz da resposta
-integrations/    ⏳ notificação ao especialista (Slack/Teams)
+integrations/    🚧 adaptador MCP → LangChain (pronto) e notificação ao especialista (planejado)
 classifiers/     ⏳ classificador de triagem
 api/  ui/        ⏳ webhooks e interface
 llm/             ✅ fábrica de modelos por papel e dublê para testes
 mcp_server/      ✅ servidor MCP e ferramentas (consulta, contenção, investigação)
-core/            ✅ configuração, modelo de dados, contratos, política, privacidade
+core/            ✅ configuração, modelo de dados, contratos, política, privacidade, auditoria
 data/            ✅ dados sintéticos reprodutíveis
-scripts/         ✅ geração de dados e carga do banco
+scripts/         ✅ geração de dados, carga do banco e execução do investigador
 tests/           ✅ testes unitários, de integração e smoke test do LLM
 ```
 
 ## Roteiro
 
-0 Preparação ✅ · 1 Modelo de dados ✅ · 2 Regras do lote ✅ · 3 Camada de LLM ✅ · 4 Ferramentas de investigação ✅ · **5 Agente investigador** · 6 Avaliação do agente · 7 Triagem e política · 8 Orquestrador e HITL · 9 Agente atendente · 10 Juiz da resposta · 11 API, simulador e interface · 12 Migrações e operação
+0 Preparação ✅ · 1 Modelo de dados ✅ · 2 Regras do lote ✅ · 3 Camada de LLM ✅ · 4 Ferramentas de investigação ✅ · 5 Agente investigador ✅ · **6 Avaliação do agente** · 7 Triagem e política · 8 Orquestrador e HITL · 9 Agente atendente · 10 Juiz da resposta · 11 API, simulador e interface · 12 Migrações e operação
 
 Detalhes de cada etapa na seção 10 do [CLAUDE.md](CLAUDE.md).
