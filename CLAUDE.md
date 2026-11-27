@@ -65,7 +65,7 @@ omniops-ai/
 │   ├── batch_containment.py             detecção e contenção do lote (determinístico)
 │   └── response_judge.py                juiz da resposta: passo avaliador (LLM-as-judge), sem laço
 ├── integrations/                  [novo]  adaptadores para sistemas externos
-│   └── specialist_liaison.py            A2A com Slack/Teams: publica dossiê e recebe a resposta
+│   └── specialist_liaison.py            enlace HITL com o especialista (Slack/Teams): publica dossiê e recebe a resposta
 ├── classifiers/                   [novo]  modelo de classificação, não agente
 │   ├── triage.py                        interface TriageClassifier, TriageResult e implementações
 │   └── translation.py                   interface Translator e TranslatingClassifier (decorator)
@@ -115,6 +115,7 @@ omniops-ai/
 | D24 | **Ferramentas do investigador:** lista fechada `INVESTIGATOR_TOOLS` (6): `check_batch_failure_rate`, `defect_rate_by(batch_id, dimension)` (uma ferramenta com `dimension` enumerada em vez de quatro), `compare_factory_batches`, `complaint_timeline`, `search_symptoms`, `sample_defect_complaints` (máx. 8). Devolvem **taxas já normalizadas** pela base do grupo (produzidas para linha/dia; vendidas para transportadora/semana), texto livre via `mask_pii`, orçamento de **≤ 1.500 caracteres por resposta** (testado) e erros com as opções válidas. Todas as ferramentas MCP têm `ToolAnnotations` (dica ao cliente, não proteção). `get_batch_defect_symptoms` (texto sem máscara, para o dossiê humano) e `find_silent_customers` (contatos) **ficam fora** | Para modelos pequenos, poucas ferramentas e respostas curtas importam mais que o prompt; cálculo é determinístico (princípio 1). Achado: nos dados, as taxas por transportadora variam por **ruído de amostra pequena** (ExpressoNorte 0,70 com 20 unidades × RotaSul 0,52 com 42), o que vira um distrator realista, muito mais fraco que L2 0,90 × L1 0,08. O servidor MCP também valida o `enum` e devolve as opções ao modelo |
 | D25 | **Nomes e pastas pela natureza da peça** (seção 8.6): `agents/` só contém agentes de LLM (`investigator.py`, `generalist.py`); `workflows/` tem `state.py`, `graph.py`, `batch_containment.py` (ex-`quality_agent`) e `response_judge.py` (ex-`judge_agent`); `integrations/specialist_liaison.py` (ex-`liaison_agent`); `core/decision_engine.py`. Sem sufixo `_agent` em arquivos. **Pendência da Etapa 10:** se o juiz ganhar ferramentas para verificar fatos por conta própria (laço), ele passa a ser agente e muda para `agents/` | Decidido em 2026-11-24, antes de qualquer arquivo existir (custo zero). Chamar workflow, adaptador ou regra de "agente" esconde a arquitetura e soa como exagero em entrevista. Descartados: manter `agents/` e só renomear arquivos (a pasta continuaria imprecisa); pasta genérica `components/` (perde a informação); `policy/` para um arquivo só |
 | D22 | **Ticket com serial válido do lote e sem pedido informado conta no numerador**; serial que não corresponde ao pedido citado (outro lote, outro pedido ou unidade em estoque) não conta em lote nenhum e vai para HITL | O serial identifica a unidade física; subcontar atrasaria a contenção de um risco de segurança (bateria estufada). A posse da unidade é verificada depois, no HITL. Inconsistência nunca infla nenhum lote |
+| D29 | **O protocolo A2A (Agent2Agent) fica fora do núcleo**; vira extensão opcional após a Etapa 11 (Etapa 13, seção 8.7). Terminologia: o enlace com o especialista humano é **HITL**, não A2A | Todos os agentes rodam no mesmo processo e domínio de confiança; o A2A resolve delegação entre agentes **independentes e opacos** e acrescentaria rede, falhas e estado distribuído sem ganho, além de ir contra o roteamento determinístico (princípio 4). Decidido em 2026-11-26. Numeração: D26–D28 seguem reservadas pela Etapa 5 |
 
 ## 6. Modelo de dados e fórmulas
 
@@ -140,7 +141,7 @@ taxa = unidades distintas identificadas com defeito no lote / total_units_produc
 - Reclamações sem serial identificável são contadas **à parte**, fora do numerador, e exibidas junto da taxa (a taxa pode estar abaixo da incidência real).
 - Serial informado que não existe em `units` ou pertence a outro lote **não entra** no numerador e vai para HITL.
 - **Regra exata implementada (Etapa 2, D22):** um ticket `defective_item` entra no numerador se `units.batch_id = lote` **e** (`tickets.order_id IS NULL` **ou** `tickets.order_id IS NOT DISTINCT FROM units.order_id`). Tickets ligados ao lote (pelo pedido ou pelo serial) que têm serial mas falham nessa condição são `inconsistent_serial_complaints_count` (HITL). Serial inexistente não pode ser gravado (FK): o ticket fica com `serial_number NULL` e cai em `unidentified_complaints_count`. Limiar `>= 0.50` em `core/policy_config.py` (`Decimal`, `rule_id = batch.failure_rate.critical_v1`). Saída validada por `BatchFailureMetrics`.
-- **Taxa ≥ 0.50:** (1) marca `batch_flagged` no ticket e bloqueia o lote (`is_blocked = true`); (2) alerta proativo aos "clientes silenciosos"; (3) aciona o especialista humano (A2A) com dossiê e dispara o investigador.
+- **Taxa ≥ 0.50:** (1) marca `batch_flagged` no ticket e bloqueia o lote (`is_blocked = true`); (2) alerta proativo aos "clientes silenciosos"; (3) aciona o especialista humano (HITL) com dossiê e dispara o investigador.
 
 **Clientes silenciosos:** a elegibilidade é **por pedido**. Um pedido do lote é elegível se não há reclamação de defeito referente ao produto/lote daquele pedido e não há alerta com status `delivered`. Implementado como: não existe ticket `defective_item` com `order_id` = pedido **ou** com serial de uma unidade do pedido; e não existe `proactive_alert_events` `delivered` do pedido. Outros pedidos do mesmo cliente não interferem. A ferramenta devolve `silent_orders` (com contato do cliente: **nunca** entregá-la ao investigador; menor privilégio/LGPD).
 
@@ -167,7 +168,7 @@ W_canal:       reclame_aqui +25 · whatsapp +10 · email +5
               |-- ameaça judicial  HITL prioritário: acuse neutro + atendimento humano
               |-- defective_item . [batch_containment (workflow): taxa do lote]
               |        taxa >= 0.50: bloqueio + alertas por template + dossiê ao especialista
-              |                      (specialist_liaison, A2A)
+              |                      (specialist_liaison, HITL)
               |                      + [investigator (AGENTE, somente leitura)] anexa hipóteses ao dossiê
               |-- demais ........ [generalist (AGENTE ReAct, ferramentas de leitura)]
                                         -> [response_judge (passo avaliador)] -> envio
@@ -260,7 +261,7 @@ Passo avaliador do workflow (`workflows/response_judge.py`; LLM-as-judge, padrã
 - **Orquestrador** (`workflows/graph.py`, estado em `workflows/state.py`): `StateGraph` com **roteamento determinístico** (não um LLM supervisor), checkpoint por `thread_id`, pausa para HITL e retomada.
 - **`core/decision_engine.py`**: política determinística; não é agente.
 - **`workflows/batch_containment.py`**: detecção e contenção do lote (workflow determinístico com ferramentas MCP).
-- **`integrations/specialist_liaison.py`**: adaptador A2A com Slack/Teams (não raciocina). Publica o **dossiê técnico** (canal de origem, sintomas, `batch_id`, `factory_code`, `manufacturing_date`, `product_id`, volume produzido vs. taxa, contenção já executada e contagem de clientes silenciosos alertados, hipóteses do investigador) e botões de retorno (ex.: "Registrar causa raiz e confirmar recall do lote X"). O webhook de resposta valida o token, registra o diagnóstico e retoma o grafo (`graph.ainvoke(None, config={"configurable": {"thread_id": ...}})`).
+- **`integrations/specialist_liaison.py`**: adaptador de enlace HITL com o especialista via Slack/Teams (não raciocina; **não** é o protocolo A2A, ver 8.7). Publica o **dossiê técnico** (canal de origem, sintomas, `batch_id`, `factory_code`, `manufacturing_date`, `product_id`, volume produzido vs. taxa, contenção já executada e contagem de clientes silenciosos alertados, hipóteses do investigador) e botões de retorno (ex.: "Registrar causa raiz e confirmar recall do lote X"). O webhook de resposta valida o token, registra o diagnóstico e retoma o grafo (`graph.ainvoke(None, config={"configurable": {"thread_id": ...}})`).
 - **Ingestão omnichannel** (`api/adapters/omnichannel.py`): WhatsApp (estilo Evolution API/Meta Cloud API: `data.key.remoteJid`, `data.message.conversation`), e-mail (estilo SendGrid Inbound Parse: `from`, `subject`, `text`), Reclame Aqui (`consumer_username`, `title`, `complaint_body`) → `StandardTicket`.
 
 ### 8.6 Modelo, workflow ou agente? (nota didática)
@@ -278,6 +279,24 @@ Distinção do texto "Building effective agents" (Anthropic): *modelo de classif
 | **Generalista** | **agente de LLM** (ReAct) | **sim** | `agents/` |
 
 **Agência é um espectro.** Pelas propriedades clássicas (Wooldridge & Jennings: autonomia, reatividade, proatividade, habilidade social), o investigador é agente com **autonomia deliberadamente limitada** (só leitura, ≤ 6 ferramentas, ≤ 8 passos; princípio 2), reage a cada resultado de ferramenta e persegue o objetivo, mas **não se ativa sozinho** (o workflow o dispara) e **adapta-se só dentro de uma execução** (sem memória entre execuções; a melhora entre versões é feita pelos engenheiros via evals, Etapa 6). O **sistema** resolve tarefas simples de ponta a ponta combinando peças estreitas: classificador percebe → política decide → generalista age → juiz e política verificam. O classificador nunca fala com o cliente.
+
+### 8.7 A2A (protocolo Agent2Agent): fora do núcleo, extensão opcional — D29
+
+**Terminologia.** O protocolo **A2A** (publicado pelo Google em 2025 e hoje mantido na Agentic AI Foundation; v1.0 congelada em março de 2026, segundo um guia da própria fundação, a reverificar na especificação) padroniza como agentes **independentes** delegam trabalho entre si: *Agent Card* em `/.well-known/agent-card.json`, *tasks* com ciclo de vida (`SUBMITTED`, `WORKING`, `INPUT_REQUIRED`, `AUTH_REQUIRED`, `COMPLETED`, `FAILED`, `CANCELED`, `REJECTED`), mensagens, artefatos e transporte por JSON-RPC, gRPC ou HTTP+JSON. O agente remoto é **opaco**: não se veem suas ferramentas, memória nem modelo. Neste projeto, o enlace com o especialista humano (Slack/Teams) é **HITL**, não A2A.
+
+| | MCP | A2A |
+|---|---|---|
+| Conecta | agente ↔ ferramenta/dados | agente ↔ agente |
+| No projeto | `mcp_server/` | não usado no núcleo |
+
+**Por que fica fora do núcleo:** os agentes rodam no mesmo processo, no mesmo grafo e no mesmo domínio de confiança. O A2A acrescentaria latência, falhas de rede e estado distribuído sem ganho, e a descoberta dinâmica de agentes contraria o roteamento determinístico (princípio 4).
+
+**Extensão opcional (Etapa 13), nas bordas e sem alterar o núcleo:**
+1. **Investigador como serviço A2A** (candidato principal). Contrato claro (objetivo → `InvestigationReport`), tarefa longa e assíncrona, e `INPUT_REQUIRED` casa com "pedir um dado ao especialista". Atrás de uma interface `Investigator` (princípio 8): `LocalInvestigator` (em processo, o atual) e `RemoteA2AInvestigator` (cliente A2A). Mapeamento de estados: `WORKING` durante o laço; `COMPLETED` com o relatório como artefato; `FAILED` ou `REJECTED` quando o orçamento estourar ou o pedido for inválido. O serviço poderia rodar no PC Windows, junto do Ollama (seção 12).
+2. **Agente externo simulado** (ex.: transportadora), o caso mais fiel ao propósito do protocolo (outra organização, agente opaco), consumido pelo generalista.
+3. O HITL **não** vira A2A (humano não é agente), mas tem o mesmo formato de `INPUT_REQUIRED`: o grafo pausa por `thread_id` e retoma. Serve de analogia didática.
+
+**Regras ao implementar:** saídas de agentes remotos são **dados, não instruções** (seção 7.2, item 6); Agent Card e autenticação configurados por ambiente; versão do protocolo fixada (cabeçalho `A2A-Version`); testes com um servidor A2A falso; nada disso pode ser requisito para o núcleo funcionar. Verificar a especificação e o SDK Python oficiais antes de implementar.
 
 ## 9. Estado atual do código (auditoria de 2026-11-23)
 
@@ -315,11 +334,12 @@ Cada etapa termina com testes passando, esta seção e a 9 atualizadas, a **tabe
 | 5 🚧 | **Agente investigador v1** (`agents/investigator.py`; subgrafo em laço, orçamentos, `InvestigationReport`) rodando via `scripts/run_investigation.py` | Laço ReAct, tool calling, limites de autonomia, saída estruturada |
 | 6 | **Avaliar e melhorar o investigador:** eval contra a causa plantada, métricas, ajuste de prompt, comparação entre `qwen3:4b`, `qwen3:8b` (com offload parcial para CPU) e, depois, uma API externa | Como medir um agente; avaliação de sistemas não determinísticos |
 | 7 | `core/policy_config.py`, `core/decision_engine.py` e classificador: `Fake` + lexical → NLI → treinado; tradução opcional; conjunto dourado e calibração | Camada determinística vs. modelo; fail-closed; ciclo de ML; avaliação por campo |
-| 8 | Orquestrador (`workflows/graph.py`, `workflows/state.py`), contenção de lote integrada (`workflows/batch_containment.py`), HITL, `integrations/specialist_liaison.py`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, A2A |
+| 8 | Orquestrador (`workflows/graph.py`, `workflows/state.py`), contenção de lote integrada (`workflows/batch_containment.py`), HITL, `integrations/specialist_liaison.py`; investigador acionado ao atingir 50% | Estado, roteamento condicional, pausa e retomada por `thread_id`, enlace HITL com o especialista |
 | 9 | Generalista ReAct (`agents/generalist.py`), com avaliação | Agente voltado ao cliente com menor privilégio |
 | 10 | Juiz da resposta (`workflows/response_judge.py`), com avaliação do próprio juiz; decidir se ganha ferramentas (vira agente, D25) | LLM-as-judge e seus vieses |
 | 11 | `api/*`, mocks JSON, `simulate_traffic.py`, `test_flows.py`, `ui/app.py` | Normalização omnichannel; demo de portfólio |
 | 12 | Alembic e endurecimento (observabilidade, limites, kill switch) | Migrações de esquema; operação |
+| 13 (opcional) | Extensão A2A (seção 8.7): investigador atrás da interface `Investigator`, com implementação remota via A2A, e agente externo simulado | Protocolo agente↔agente vs. MCP; quando uma fronteira entre sistemas justifica um protocolo |
 
 ## 11. Convenções
 
