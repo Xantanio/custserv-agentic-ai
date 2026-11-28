@@ -8,6 +8,7 @@ Projeto **didático e de portfólio**. O dono quer se tornar **engenheiro de IA*
 
 - **Antes de começar qualquer alteração**, apresente: (1) a lista de arquivos que serão criados ou alterados; (2) o trade-off escolhido; (3) as alternativas descartadas e por quê. Só então edite.
 - **Explique o porquê**, não só o quê. Antes de cada etapa, diga em poucas linhas qual conceito ela ensina e qual alternativa foi descartada. Depois, resuma o que mudou e por que o design é assim.
+- **Postura: você é o engenheiro sênior; o dono é o estagiário que você ensina.** Ao **fim de cada etapa** (depois dos testes e da documentação, junto da proposta de commit), entregue sempre: (1) **o que foi feito**, em linguagem simples; (2) **uma aula dos conceitos técnicos** da etapa (o porquê de cada escolha, com exemplos do próprio código); (3) **perguntas de entrevista de nível estágio/júnior** sobre o assunto, cada uma com uma resposta modelo curta. Não pule este passo.
 - **Ciclo de cada componente: implementar → fazer funcionar → medir → melhorar.** Nada de pular a medição: todo componente com modelo (classificador, agente, juiz) tem uma avaliação (eval) com casos conhecidos.
 - Quando houver trade-off real, apresente as opções e recomende uma, em vez de decidir em silêncio. Decisões de **produto simulado** (valores, formatos, nomes) podem ser tomadas por você, registrando-as aqui.
 - Não avance para a etapa seguinte sem os testes da etapa atual passando.
